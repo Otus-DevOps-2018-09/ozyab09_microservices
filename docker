@@ -1,0 +1,4 @@
+  PID TTY           TIME CMD
+ 3114 ttys000    0:01.90 /bin/zsh -l
+ 1945 ttys001    0:00.04 /Applications/Dev/iTerm.app/Contents/MacOS/iTerm2 --server /usr/bin/login -fpl ozyab /Applications/Dev/iTerm.app/Contents/MacOS/iTerm2 --launch_shell
+ 1947 ttys001    0:00.91 -zsh
