@@ -86,6 +86,12 @@ gitlab/gitlab-runner:latest
 * Запуск runner'а:
 `docker exec -it gitlab-runner gitlab-runner register`
 
+* Добавление исходного кода в репозиторий:
+git clone https://github.com/express42/reddit.git && rm -rf ./reddit/.git
+git add reddit/
+git commit -m 'Add reddit app'
+git push gitlab gitlab-ci-1
+
 
 
 
