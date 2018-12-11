@@ -1,8 +1,166 @@
 # ozyab09_microservices
 ozyab09 microservices repository
 
+### Homework 15 (docker-4)
+[![Build Status](https://travis-ci.com/Otus-DevOps-2018-09/ozyab09_microservices.svg?branch=docker-4)](https://travis-ci.com/Otus-DevOps-2018-09/ozyab09_microservices)
+
+* Подключение к `docker-host`:
+`eval $(docker-machine env docker-host)`
+
+* Запуск контейнера `joffotron/docker-net-tools` с набором сетевых утилит:
+`docker run -ti --rm --network none joffotron/docker-net-tools -c ifconfig`
+
+Использован `none-driver`, вывод работы контейнера:
+```
+lo Link encap:Local Loopback
+   inet addr:127.0.0.1  Mask:255.0.0.0
+   UP LOOPBACK RUNNING  MTU:65536  Metric:1
+   RX packets:0 errors:0 dropped:0 overruns:0 frame:0
+   TX packets:0 errors:0 dropped:0 overruns:0 carrier:0
+   collisions:0 txqueuelen:1000
+   RX bytes:0 (0.0 B)  TX bytes:0 (0.0 B)
+```
+* Запуск контейнера в сетевом пространстве `docker`-хоста:
+`docker run -ti --rm --network host joffotron/docker-net-tools -c ifconfig`
+
+Запуск `ipconfig` на `docker-host`'е приведет к аналогичному выводу:
+`docker-machine ssh docker-host ifconfig`
+
+* Запуст nginx в фоне в сетевом пространстве docker-host:
+`docker run --network host -d nginx`
+
+При повторном выполнении команды получим ошибку:
+```
+2018/11/30 19:50:53 [emerg] 1#1: bind() to 0.0.0.0:80 failed (98: Address already in use)
+nginx: [emerg] bind() to 0.0.0.0:80 failed (98: Address already in use)
+```
+По причине того, что порт 80 уже занят.
+
+* Для просмотра существующих net-namespaces необходимо выполнить на docker-host:
+`sudo ln -s /var/run/docker/netns /var/run/netns`
+Просмотр:
+`sudo ip netns`
+- При запуске контейнера с сетью `host` net-namespace один - default.
+- При запуске контейнера с сетью `none` в спсике добавится id net-namespace.
+Вывод списка `net-namespac`'ов:
+```
+user@docker-host:~$ sudo ip net
+88f8a9be77ca
+default
+```
+Можно выполнить команду в выбранном `net-namespace`:
+```
+user@docker-host:~$ sudo ip netns exec 88f8a9be77ca ifconfig
+lo  Link encap:Local Loopback  
+  inet addr:127.0.0.1  Mask:255.0.0.0
+  UP LOOPBACK RUNNING  MTU:65536  Metric:1
+  RX packets:0 errors:0 dropped:0 overruns:0 frame:0
+  TX packets:0 errors:0 dropped:0 overruns:0 carrier:0
+  collisions:0 txqueuelen:1000 
+  RX bytes:0 (0.0 B)  TX bytes:0 (0.0 B)
+```
+
+* Создание `bridge`-сети:
+`docker network create reddit --driver bridge`
+
+* Запуск проекта `reddit` с использованием `bridge`-сети:
+```
+docker run -d --network=reddit mongo:latest
+docker run -d --network=reddit ozyab/post:1.0
+docker run -d --network=reddit ozyab/comment:1.0
+docker run -d --network=reddit -p 9292:9292 ozyab/ui:1.0
+```
+В данной конфигурации `web`-сервис `puma` не сможет подключиться к БД `mongodb`.
+
+Сервисы ссылаются друг на друга по `dns`-именам, прописанным в `ENV`-переменных `Dockerfil`'а. Встроенный `DNS docker`'а ничего не знает об этих именах.
+
+Присвоение контейнерам имен или сетевых алиасов при старте:
+```
+--name <name> (max 1 имя)
+--network-alias <alias-name> (1 или более)
+```
+
+* Запуск контейнеров с сетевыми алиасами:
+```
+docker run -d --network=reddit --network-alias=post_db --network-alias=comment_db mongo:latest
+docker run -d --network=reddit --network-alias=post ozyab/post:1.0
+docker run -d --network=reddit --network-alias=comment ozyab/comment:1.0
+docker run -d --network=reddit -p 9292:9292 ozyab/ui:1.0
+```
+* Запуск проекта в 2-х `bridge` сетях. Сервис `ui` не имеет доступа к базе данных.
+
+Создание `docker`-сетей:
+```
+docker network create back_net --subnet=10.0.2.0/24
+docker network create front_net --subnet=10.0.1.0/24
+```
+Запуск контейнеров:
+```
+docker run -d --network=front_net -p 9292:9292 --name ui ozyab/ui:1.0
+docker run -d --network=back_net --name comment ozyab/comment:1.0
+docker run -d --network=back_net --name post ozyab/post:1.0
+docker run -d --network=back_net --name mongo_db  --network-alias=post_db --network-alias=comment_db mongo:latest 
+```
+Docker при инициализации контейнера может подключить к нему только 1 сеть, поэтому контейнеры `comment` и `post` не видят контейнер `ui` из соседних сетей. 
+
+Нужно поместить контейнеры post и comment в обе сети. Дополнительные сети подключаются командой: `docker network connect <network> <container>`:
+```
+docker network connect front_net post
+docker network connect front_net comment 
+```
+Установка пакета `bridge-utils`:
+```
+docker-machine ssh docker-host
+sudo apt-get update && sudo apt-get install bridge-utils
+```
+Выполнив `docker network ls` можно увидеть список виртуальных сетей `docker`'а.
+`ifconfig | grep br` покажет список `bridge`-интерфейсов:
+```
+br-45935d0f2bbf Link encap:Ethernet  HWaddr 02:42:6d:5a:8b:7e
+br-45bbc0c70de1 Link encap:Ethernet  HWaddr 02:42:94:69:ab:35
+br-b6342f9c65f2 Link encap:Ethernet  HWaddr 02:42:9a:b1:73:d9
+```
+Можно просмотреть информацию о каждом `bridge`-интерфейсе командой `brctl show <interface>`:
+```
+docker-user@docker-host:~$brctl show br-45935d0f2bbf
+bridge name      bridge id          STP enabled   interfaces
+br-45935d0f2bbf  8000.02426d5a8b7e  no            veth05b2946
+                                                  veth2f50985
+                                                  vetha882d28
+```
+_veth-интерфейс_ - часть виртуальной пары интерфейсов, которая лежат в сетевом пространстве хоста и
+также отображаются в ifconfig. Вторые часть виртуального интерфейса находится внутри контейнеров.
+
+Просмотр `iptables`: `sudo iptables -nL -t nat`
+```
+Chain POSTROUTING (policy ACCEPT)
+target     prot opt source               destination
+MASQUERADE  all  --  10.0.1.0/24          0.0.0.0/0
+MASQUERADE  all  --  10.0.2.0/24          0.0.0.0/0
+MASQUERADE  tcp  --  10.0.1.2             10.0.1.2             tcp dpt:9292
+```
+Первые правила отвечают за выпуск трафика из контейнеров наружу.
+```
+Chain DOCKER (2 references)
+target     prot opt source               destination
+RETURN     all  --  0.0.0.0/0            0.0.0.0/0
+DNAT       tcp  --  0.0.0.0/0            0.0.0.0/0            tcp dpt:9292 to:10.0.1.2:9292
+```
+Последняя строка прокидывает порт 9292 внутрь контейнера.
+
+## Docker-compose
+* Файлу `./src/docker-compose.yml` требуется переменная окружения `USERNAME`: `export USERNAME=ozyab`
+
+Можно выполнить: `docker-compose up -d`
+
+* Изменить `docker-compose` под кейс с множеством сетей, сетевых алиасов 
+* Файл `.env` - переменные для `docker-compose.yml`
+* Базовое имя создается по имени папки, в которой происходит запуск `docker-compose`.
+
+Для задания базового имени проекта необходимо добавить переменную `COMPOSE_PROJECT_NAME=dockermicroservices`
+
 ### Homework 14 (docker-3)
-[![Build Status](https://travis-ci.com/Otus-DevOps-2018-09/ozyab09_microservices.svg?branch=docker-3)](https://travis-ci.com/Otus-DevOps-2018-09/ozyab09_microservices )
+[![Build Status](https://travis-ci.com/Otus-DevOps-2018-09/ozyab09_microservices.svg?branch=docker-3)](https://travis-ci.com/Otus-DevOps-2018-09/ozyab09_microservices)
 
 Работа в папке src:
 - `post-py` - сервис отвечающий за написание постов
@@ -38,7 +196,7 @@ docker run -d --network=reddit -p 9292:9292 ozyab/ui:2.0
 * После перезапуска информация остается в базе
 
 ### Homework 13 (docker-2)
-[![Build Status](https://travis-ci.com/Otus-DevOps-2018-09/ozyab09_microservices.svg?branch=docker-2)](https://travis-ci.com/Otus-DevOps-2018-09/ozyab09_microservices )
+[![Build Status](https://travis-ci.com/Otus-DevOps-2018-09/ozyab09_microservices.svg?branch=docker-2)](https://travis-ci.com/Otus-DevOps-2018-09/ozyab09_microservices)
 
 * Работа с `docker-machine`:
 
@@ -103,7 +261,7 @@ gcloud compute firewall-rules create reddit-app \
 
 
 ### Homework 12 (docker-1)
-[![Build Status](https://travis-ci.com/Otus-DevOps-2018-09/ozyab09_microservices.svg?branch=docker-1)](https://travis-ci.com/Otus-DevOps-2018-09/ozyab09_microservices )
+[![Build Status](https://travis-ci.com/Otus-DevOps-2018-09/ozyab09_microservices.svg?branch=docker-1)](https://travis-ci.com/Otus-DevOps-2018-09/ozyab09_microservices)
 * Добавлен файл шаблона PR `.github/PULL_REQUEST_TEMPLATE`
 * Интеграция со slack выполняется командой `/github subscribe Otus-DevOps-2018-09/ozyab09_microservices`
 * Запуск контейнера: `docker run hello-world`
