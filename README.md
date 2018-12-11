@@ -1,6 +1,143 @@
 # ozyab09_microservices
 ozyab09 microservices repository
 
+
+### Homework 16 (gitlab-ci-1)
+[![Build Status](https://travis-ci.com/Otus-DevOps-2018-09/ozyab09_microservices.svg?branch=gitlab-ci-1)](https://travis-ci.com/Otus-DevOps-2018-09/ozyab09_microservices)
+
+* Установка <i>Docker</i>:
+```
+curl -fsSL https://download.docker.com/linux/ubuntu/gpg | sudo apt-key add -
+add-apt-repository "deb https://download.docker.com/linux/ubuntu $(lsb_release -cs) stable"
+apt-get update
+apt-get install docker-ce docker-compose
+```
+
+* Подготовка окружения:
+```
+mkdir -p /srv/gitlab/config /srv/gitlab/data /srv/gitlab/logs
+cd /srv/gitlab/
+touch docker-compose.yml
+```
+<i>docker-compose.yml</i>:
+```
+web:
+  image: 'gitlab/gitlab-ce:latest'
+  restart: always
+  hostname: 'gitlab.example.com'
+  environment:
+    GITLAB_OMNIBUS_CONFIG: |
+      external_url 'http://<VM-IP>'
+  ports:
+    - '80:80'
+    - '443:443'
+    - '2222:22'
+  volumes:
+    - '/srv/gitlab/config:/etc/gitlab'
+    - '/srv/gitlab/logs:/var/log/gitlab'
+    - '/srv/gitlab/data:/var/opt/gitlab'
+```
+* Запуск <i>Gitlab CI</i>: `docker-compose up -d`
+
+* <i>GUI GitLab</i>: Отключение регистрации, создание группы проектов <i>homework</i>, создание проекта <i>example</i>
+
+* Добавление <i>remote</i> в проект <i>microservices</i>:
+`git remote add gitlab http://<ip>/homework/example.git`
+
+* <i>Push</i> в репозиторий:
+`http://35.204.52.154/homework/example`
+
+* Определение <i>CI/CD Pipeline</i> проекта производится в файле <i>.gitlab-ci.yml</i>:
+```
+stages:
+  - build
+  - test
+  - deploy
+
+build_job:
+  stage: build
+  script:
+    - echo 'Building'
+
+test_unit_job:
+  stage: test
+  script:
+    - echo 'Testing 1'
+
+test_integration_job:
+  stage: test
+  script:
+    - echo 'Testing 2'
+
+deploy_job:
+  stage: deploy
+  script:
+    - echo 'Deploy'
+```
+
+* Установка GitLab Runner:
+```
+docker run -d --name gitlab-runner --restart always \
+-v /srv/gitlab-runner/config:/etc/gitlab-runner \
+-v /var/run/docker.sock:/var/run/docker.sock \
+gitlab/gitlab-runner:latest
+```
+
+* Запуск <i>runner</i>'а:
+`docker exec -it gitlab-runner gitlab-runner register`
+
+* Добавление исходного кода в репозиторий:
+```
+git clone https://github.com/express42/reddit.git && rm -rf ./reddit/.git
+git add reddit/
+git commit -m 'Add reddit app'
+git push gitlab gitlab-ci-1
+```
+
+* Изменение описания пайплайна в <i>.gitlab-ci.yml</i>:
+```
+image: ruby:2.4.2
+stages:
+...
+variables:
+  DATABASE_URL: 'mongodb://mongo/user_posts'
+before_script:
+  - cd reddit
+  - bundle install
+...
+test_unit_job:
+  stage: test
+  services:
+    - mongo:latest
+  script:
+    - ruby simpletest.rb
+...
+```
+
+* В пайплайне выше добавлен вызов <i>reddit/simpletest.rb</i>:
+```
+require_relative './app'
+require 'test/unit'
+require 'rack/test'
+
+set :environment, :test
+
+class MyAppTest < Test::Unit::TestCase
+  include Rack::Test::Methods
+
+  def app
+    Sinatra::Application
+  end
+
+  def test_get_request
+    get '/'
+    assert last_response.ok?
+  end
+end
+```
+
+* Добавление библиотеки для тестирования в <i>reddit/Gemfile</i>: `gem 'rack-test'`
+
 ### Homework 15 (docker-4)
 [![Build Status](https://travis-ci.com/Otus-DevOps-2018-09/ozyab09_microservices.svg?branch=docker-4)](https://travis-ci.com/Otus-DevOps-2018-09/ozyab09_microservices)
 
