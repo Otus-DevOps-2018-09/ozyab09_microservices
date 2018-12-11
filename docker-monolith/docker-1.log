@@ -1,0 +1,11 @@
+REPOSITORY               TAG                 IMAGE ID            CREATED             SIZE
+ozyab09/ubuntu-tmp-file  latest              7c5e65110248        10 seconds ago      109MB
+hello-world              latest              4ab4c602aa5e        2 months ago        1.84kB
+ubuntu                   latest              c9d990395902        7 months ago        113MB
+nginx                    latest              b175e7467d66        7 months ago        109MB
+consol/centos-xfce-vnc   latest              30a575827da3        7 months ago        1.49GB
+alpine                   latest              3fd9065eaf02        10 months ago       4.15MB
+
+docker inspect <контейнер> - в нем описывается все переменные оркужения, сетевые настройки и т.д. как у настоящей, рабочей машины.
+Указан в т.ч. и Image_ID образа.
+docker inspect <image> - в нём прописываются необходимые данные для того, чтобы создать контейнер.
