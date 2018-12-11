@@ -1,6 +1,42 @@
 # ozyab09_microservices
 ozyab09 microservices repository
 
+### Homework 14 (docker-3)
+[![Build Status](https://travis-ci.com/Otus-DevOps-2018-09/ozyab09_microservices.svg?branch=docker-3)](https://travis-ci.com/Otus-DevOps-2018-09/ozyab09_microservices )
+
+Работа в папке src:
+- `post-py` - сервис отвечающий за написание постов
+- `comment` - сервис отвечающий за написание комментариев
+- `ui` - веб-интерфейс, работающий с другими сервисами
+* Сборка образов:
+```
+docker build -t ozyab/post:1.0 ./post-py
+docker build -t ozyab/comment:1.0 ./comment
+docker build -t ozyab/ui:1.0 ./ui
+```
+* Отдельная bridge-сеть для контейнеров, так как сетевые алиасы не работают в сети по умолчанию:
+`docker network create reddit`
+
+* Запуск контейнеров в этой сети с сетевыми алиасами контейнеров:
+```
+docker run -d --network=reddit --network-alias=post_db --network-alias=comment_db mongo:latest
+docker run -d --network=reddit --network-alias=post ozyab/post:1.0
+docker run -d --network=reddit --network-alias=comment ozyab/comment:1.0
+docker run -d --network=reddit -p 9292:9292 ozyab/ui:1.0
+```
+* Остановка всех контейнеров:
+`docker kill $(docker ps -q)`
+* Создание Docker volume:
+`docker volume create reddit_db`
+* Запуск контейнеров с docker volume:
+```
+docker run -d --network=reddit --network-alias=post_db --network-alias=comment_db -v reddit_db:/data/db mongo:latest
+docker run -d --network=reddit --network-alias=post ozyab/post:1.0
+docker run -d --network=reddit --network-alias=comment ozyab/comment:1.0
+docker run -d --network=reddit -p 9292:9292 ozyab/ui:2.0
+```
+* После перезапуска информация остается в базе
+
 ### Homework 13 (docker-2)
 [![Build Status](https://travis-ci.com/Otus-DevOps-2018-09/ozyab09_microservices.svg?branch=docker-2)](https://travis-ci.com/Otus-DevOps-2018-09/ozyab09_microservices )
 
