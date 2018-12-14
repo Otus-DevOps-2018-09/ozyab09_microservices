@@ -2,6 +2,40 @@
 ozyab09 microservices repository
 
 
+
+### Homework 17 (gitlab-ci-2)
+[![Build Status](https://travis-ci.com/Otus-DevOps-2018-09/ozyab09_microservices.svg?branch=gitlab-ci-2)](https://travis-ci.com/Otus-DevOps-2018-09/ozyab09_microservices)
+
+* Создание нового проекта <i>example2</i>
+
+* Добавление проекта в <i>username_microservices</i>
+```
+git checkout -b gitlab-ci-2
+git remote add gitlab2 http://vm-ip/homework/example2.git
+git push gitlab2 gitlab-ci-2
+```
+
+* <b>Dev-окружение</b>: Изменение пайплайна таким образом, чтобы <i>job deploy</i> стал определением окружения <i>dev</i>, на которое условно будет выкатываться каждое изменение в коде проекта:
+1. Переименуем <i>deploy stage</i> в <i>review</i>
+2. <i>deploy_job</i> заменим на <i>deploy_dev_job</i>
+3. Добавим <i>environment</i>
+```yaml
+name: dev
+url: http://dev.example.com
+```
+В разделе <i>Operations</i> - <i>Environment</i> появится окружение <i>dev</i>
+
+* Два новых этапа: <i>stage</i> и <i>production</i>. <i>Stage</i> будет содержать <i>job</i>, имитирующий выкатку на <i>staging</i> окружение, <i>production</i> - на <i>production</i> окружение. <i>Job</i> будут запускаться с кнопки
+
+* Директива <i>only</i> описывает список условий, которые должны быть истинны, чтобы <i>job</i> мог запуститься. Регулярное выражение  `/^\d+\.\d+\.\d+/` означает, что должен стоять <i>semver</i> тэг в <i>git<i>, например, <i>2.4.10</i>
+
+* Пометка текущего коммита тэгом:
+```git tag 2.4.10```
+
+
+
+
+
 ### Homework 16 (gitlab-ci-1)
 [![Build Status](https://travis-ci.com/Otus-DevOps-2018-09/ozyab09_microservices.svg?branch=gitlab-ci-1)](https://travis-ci.com/Otus-DevOps-2018-09/ozyab09_microservices)
 
