@@ -30,9 +30,31 @@ url: http://dev.example.com
 * Директива <i>only</i> описывает список условий, которые должны быть истинны, чтобы <i>job</i> мог запуститься. Регулярное выражение  `/^\d+\.\d+\.\d+/` означает, что должен стоять <i>semver</i> тэг в <i>git<i>, например, <i>2.4.10</i>
 
 * Пометка текущего коммита тэгом:
-```git tag 2.4.10```
+```
+git tag 2.4.10
+```
 
+* Пуш с тэгами:
+```
+git push gitlab2 gitlab-ci-2 --tags
+```
 
+* Динамические окружения позволяет вам иметь выделенный стенд для каждой <i>feature</i>-ветки в <i>git</i>. Определяются динамические окружения с
+помощью переменных, доступных в <i>.gitlab-ci.yml</i>.
+<i>Job</i> определяет динамическое окружение для каждой ветки в репозитории, кроме ветки <i>master</i>
+
+```yml
+branch review:
+  stage: review
+  script: echo "Deploy to $CI_ENVIRONMENT_SLUG"
+  environment:
+    name: branch/$CI_COMMIT_REF_NAME
+    url: http://$CI_ENVIRONMENT_SLUG.example.com
+  only:
+    - branches
+  except:
+    - master
+```
 
 
 
