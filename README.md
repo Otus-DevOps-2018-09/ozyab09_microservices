@@ -2,6 +2,142 @@
 ozyab09 microservices repository
 
 
+### Homework 18 (monitoring-1)
+[![Build Status](https://travis-ci.com/Otus-DevOps-2018-09/ozyab09_microservices.svg?branch=monitoring-1)](https://travis-ci.com/Otus-DevOps-2018-09/ozyab09_microservices)
+
+* Правило фаервола для <i>Prometheus</i> и <i>Puma</i>:
+```yml
+gcloud compute firewall-rules create prometheus-default --allow tcp:9090
+gcloud compute firewall-rules create puma-default --allow tcp:9292 
+```
+
+* Создание <i>docker-host</i>:
+```
+export GOOGLE_PROJECT=_project_id_
+
+docker-machine create --driver google \
+    --google-machine-image https://www.googleapis.com/compute/v1/projects/ubuntu-os-cloud/global/images/family/ubuntu-1604-lts \
+    --google-machine-type n1-standard-1 \
+    --google-zone europe-west1-b \
+    docker-host
+```
+
+* Переключение на <i>docker-host</i>: 
+```
+eval $(docker-machine env docker-host)
+```
+
+* Запуск <i>Prometheus</i> из готового образа с <i>DockerHub</i>:
+
+```
+docker run --rm -p 9090:9090 -d --name prometheus  prom/prometheus
+```
+<i>Prometheus</i> будет запущен по адресу http://docker-host-ip:9090/
+Узнать docker-host-ip можно командой: `docker-machine ip docker-host`
+
+* Остановка контейнера: `docker stop prometheus`
+
+* Файл <i>monitoring/prometheus/Dockerfile</i>:
+```yml
+FROM prom/prometheus:v2.1.0
+ADD prometheus.yml /etc/prometheus/
+```
+Файл <i>monitoring/prometheus/prometheus.yml</i>:
+```yml
+---
+global:
+  scrape_interval: '5s' #частота сбора метрик
+scrape_configs:
+  - job_name: 'prometheus'  #джобы
+    static_configs:
+      - targets:
+        - 'localhost:9090' #адреса для сбора метрик
+  - job_name: 'ui'
+    static_configs:
+      - targets:
+        - 'ui:9292'
+  - job_name: 'comment'
+    static_configs:
+      - targets:
+        - 'comment:9292'
+```
+
+* Сборка <i>docker-образа</i>:
+```
+export USER_NAME=username
+docker build -t $USER_NAME/prometheus .
+```
+* Сборка образов при помощи скриптов <i>docker_build.sh</i> в директории каждого сервиса:
+```
+cd src/ui & ./docker_build.sh
+cd src/post-py & ./docker_build.sh
+cd src/comment & ./docker_build.sh
+```
+
+* Добавление сервиса <i>Prometheus</i> в <i>docker/Dockerfile</i>:
+```yml
+  prometheus:
+    image: ${USERNAME}/prometheus
+    ports:
+      - '9090:9090'
+    volumes:
+      - prometheus_data:/prometheus
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+      - '--storage.tsdb.retention=1d'
+    networks:
+      - back_net
+      - front_net
+```
+* Запуск микросервисов:
+```
+docker-compose up -d 
+```
+
+* [Node exporter](https://github.com/prometheus/node_exporter) для <i>docker-host</i>:
+```yml
+services:
+...
+  node-exporter:
+    image: prom/node-exporter:v0.15.2
+    user: root
+    volumes:
+      - /proc:/host/proc:ro
+      - /sys:/host/sys:ro
+      - /:/rootfs:ro
+    command:
+      - '--path.procfs=/host/proc'
+      - '--path.sysfs=/host/sys'
+      - '--collector.filesystem.ignored-mount-points="^/(sys|proc|dev|host|etc)($$|/)"'
+```
+<i>Job</i> для <i>Prometheus (prometheus.yml)</i>:
+```yml
+  - job_name: 'node'
+    static_configs:
+      - targets:
+        - 'node-exporter:9100'
+```
+
+* Пересоздание образов:
+```
+cd /monitoring/prometheus && docker build -t $USER_NAME/prometheus .
+```
+Пересоздание сервисов:
+```
+docker-compose down
+docker-compose up -d 
+```
+* Push образов на DockerHub:
+```
+docker login
+docker push $USER_NAME/ui:1.0
+docker push $USER_NAME/comment:1.0
+docker push $USER_NAME/post:1.0
+docker push $USER_NAME/prometheus
+```
+Ссылка на собранные образы на [DockerHub](https://hub.docker.com/u/ozyab)
+
 
 ### Homework 17 (gitlab-ci-2)
 [![Build Status](https://travis-ci.com/Otus-DevOps-2018-09/ozyab09_microservices.svg?branch=gitlab-ci-2)](https://travis-ci.com/Otus-DevOps-2018-09/ozyab09_microservices)
