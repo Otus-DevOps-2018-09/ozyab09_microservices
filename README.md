@@ -2,6 +2,158 @@
 ozyab09 microservices repository
 
 
+
+### Homework 19 (monitoring-2)
+[![Build Status](https://travis-ci.com/Otus-DevOps-2018-09/ozyab09_microservices.svg?branch=monitoring-2)](https://travis-ci.com/Otus-DevOps-2018-09/ozyab09_microservices)
+
+* `compose-monitoring.yml` - для мониторинга приложений
+Для запуска использовать: `docker-compose -f docker-compose-monitoring.yml up -d`
+* [cAdvisor](https://github.com/google/cadvisor) - для наблюдения за состоянием `Docker`-контейнеров (использование `CPU`, памяти, объем сетевого трафика)
+Сервис помещен в одну сеть с `Prometheus`, для сбора метрик с `cAdvisor'а`
+
+* В `Prometheus` добавлена информация о новом севрисе:
+```yml
+- job_name: 'cadvisor'
+  static_configs:
+    - targets:
+      - 'cadvisor:8080' 
+```
+После внесения изменений необходима пересборка образа:
+```
+cd monitoring/prometheus
+docker build -t $USER_NAME/prometheus .
+```
+* Запуск сервисов:
+```
+docker-compose up -d
+docker-compose -f docker-compose-monitoring.yml up -d 
+```
+* Информация из `cAdvisor` будет доступна по адресу http://docker-machine-host-ip:8080
+* Данные также собираются в `Prometheus`
+
+* Для визуализации данных следует использовать `Graphana`:
+```yml
+services:
+...
+  grafana:
+    image: grafana/grafana:5.0.0
+    volumes:
+      - grafana_data:/var/lib/grafana
+    environment:
+      - GF_SECURITY_ADMIN_USER=admin
+      - GF_SECURITY_ADMIN_PASSWORD=secret
+    depends_on:
+      - prometheus
+    ports:
+      - 3000:3000
+volumes:
+  grafana_data:
+```
+* Запуск: `docker-compose -f docker-compose-monitoring.yml up -d grafana`
+
+* `Grapahana` доступна по адресу: http://docker-mahine-host-ip:3000 
+
+* Настройка источника данных в `Graphana`:
+```yml
+Type: Prometheus
+URL: http://prometheus:9090
+Access: proxy
+```
+
+* Для сбора информации о post сервисе необходимо добавить информацию в файл `prometheus.yml`, чтобы `Prometheus` начал собирать метрики и с него:
+```yml
+scrape_configs:
+...
+  - job_name: 'post'
+  static_configs:
+   - targets:
+     - 'post:5000'
+```
+* Пересборка образа:
+```
+export USER_NAME=username
+docker build -t $USER_NAME/prometheus .
+```
+* Пересоздание `Docker` инфраструктуры мониторинга:
+```
+docker-compose -f docker-compose-monitoring.yml down
+docker-compose -f docker-compose-monitoring.yml up -d 
+```
+* Загруженные файл дашбоардов расположены в директории `monitoring/grafana/dashboards/`
+
+* `Alertmanager` - дополнительный компонент для системы мониторинга `Prometheus`
+* Сборка образа для `alertmanager`'а - файл `monitoring/alertmanager/Dockerfile`:
+```yml
+FROM prom/alertmanager:v0.14.0
+ADD config.yml /etc/alertmanager/ 
+```
+* Содержимое файла `config.yml`:
+```yml
+global:
+  slack_api_url: 'https://hooks.slack.com/services/$token/$token/$token'
+route:
+  receiver: 'slack-notifications'
+receivers:
+- name: 'slack-notifications'
+  slack_configs:
+  - channel: '#userchannel'
+```
+
+* Сервис алертинга в `docker-compose-monitoring.yml`:
+```yml
+services:
+...
+  alertmanager:
+    image: ${USER_NAME}/alertmanager
+    command:
+      - '--config.file=/etc/alertmanager/config.yml'
+  ports:
+    - 9093:9093 
+```
+
+* Файл с условиями, при которых должен срабатывать алерт и посылаться `Alertmanager`'у: `monitoring/prometheus/alerts.yml`
+* Простой алерт, который будет срабатывать в ситуации, когда одна из наблюдаемых систем (`endpoint`) недоступна для сбора метрик (в этом случае метрика `up` с лейблом `instance` равным имени данного `endpoint`'а будет равна нулю):
+```yml
+groups:
+  - name: alert.rules
+    rules:
+    - alert: InstanceDown
+      expr: up == 0
+      for: 1m
+      labels:
+        severity: page
+      annotations:
+        description: '{{ $labels.instance }} of job {{ $labels.job }} has been down for more than 1 minute'
+        summary: 'Instance {{ $labels.instance }} down'
+```
+* Файл `alerts.yml` также должен быть скопирован в сервис `prometheus`:
+```yml
+ADD alerts.yml /etc/prometheus/
+```
+* Пересборка образа `prometheus`:
+```
+docker build -t $USER_NAME/prometheus .
+```
+* Пересоздание `Docker` инфраструктуры мониторинга:
+```
+docker-compose down -d
+docker-compose -f docker-compose-monitoring.yml down
+docker-compose up -d
+docker-compose -f docker-compose-monitoring.yml up -d 
+```
+* Пуш всех образов в `dockerhub`:
+```
+docker login
+docker push $USER_NAME/ui
+docker push $USER_NAME/comment
+docker push $USER_NAME/post
+docker push $USER_NAME/prometheus
+docker push $USER_NAME/alertmanager 
+```
+Ссылка на собранные образы на [DockerHub](https://hub.docker.com/u/ozyab)
+
+
+
 ### Homework 18 (monitoring-1)
 [![Build Status](https://travis-ci.com/Otus-DevOps-2018-09/ozyab09_microservices.svg?branch=monitoring-1)](https://travis-ci.com/Otus-DevOps-2018-09/ozyab09_microservices)
 

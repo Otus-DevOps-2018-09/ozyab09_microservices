@@ -15,6 +15,7 @@ services:
       back_net:
         aliases:
           - node-exporter
+
   prometheus:
     image: ${USERNAME}/prometheus
     ports:
@@ -32,6 +33,7 @@ services:
       back_net:
         aliases:
           - prometheus
+
   post_db:
     image: mongo:3.2
     volumes:
@@ -41,12 +43,14 @@ services:
         aliases:
           - post_db
           - comment_db
+
   ui:
     image: ${USERNAME}/ui:${UI_VER}
     ports:
       - ${EXTERNAL_PORT}:9292/tcp
     networks:
       - front_net
+
   post:
     image: ${USERNAME}/post:${POST_VER}
     networks:
@@ -56,6 +60,7 @@ services:
       back_net:
         aliases:
           - post
+          
   comment:
     image: ${USERNAME}/comment:${COMMENT_VER}
     networks:
@@ -74,5 +79,5 @@ networks:
   front_net:
     name: front_net
   back_net:
-    name: front_net
+    name: back_net
 
