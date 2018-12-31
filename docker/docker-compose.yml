@@ -48,11 +48,28 @@ services:
     image: ${USERNAME}/ui:${UI_VER}
     ports:
       - ${EXTERNAL_PORT}:9292/tcp
+    logging:
+      driver: "fluentd"
+      options:
+        fluentd-address: localhost:24224
+        tag: service.ui
     networks:
       - front_net
 
   post:
-    image: ${USERNAME}/post:${POST_VER}
+    image: ${USER_NAME}/post
+    environment:
+      - POST_DATABASE_HOST=post_db
+      - POST_DATABASE=posts
+    depends_on:
+      - post_db
+    ports:
+      - "5000:5000"
+    logging:
+      driver: "fluentd"
+      options:
+        fluentd-address: localhost:24224
+        tag: service.post
     networks:
       front_net:
         aliases:
@@ -60,7 +77,7 @@ services:
       back_net:
         aliases:
           - post
-          
+
   comment:
     image: ${USERNAME}/comment:${COMMENT_VER}
     networks:
@@ -70,6 +87,9 @@ services:
       back_net:
         aliases:
           - comment
+
+
+
 
 volumes:
   post_db:
