@@ -2,18 +2,28 @@
 apiVersion: apps/v1beta2
 kind: Deployment
 metadata:
-  name: ui-deployment
+  name: ui
+  labels:
+    app: reddit
+    component: ui
 spec:
-  replicas: 1
+  replicas: 2
   selector:
     matchLabels:
-      app: ui
+      app: reddit
+      component: ui
   template:
     metadata:
-      name: ui
+      name: ui-pod
       labels:
-        app: ui
+        app: reddit
+        component: ui
     spec:
       containers:
-      - image: ozyab/ui
+      - image: ozyab/ui:latest
         name: ui
+        env:
+        - name: ENV
+          valueFrom:
+            fieldRef:
+              fieldPath: metadata.namespace
