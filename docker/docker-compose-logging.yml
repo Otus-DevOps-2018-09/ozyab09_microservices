@@ -1,0 +1,42 @@
+version: '3.5'
+
+services:
+
+  fluentd:
+    image: ${USERNAME}/fluentd
+    ports:
+      - "24224:24224"
+      - "24224:24224/udp"
+    networks:
+      back_net:
+        aliases:
+          - fluentd
+
+  elasticsearch:
+    image: elasticsearch:6.5.4
+    expose:
+      - 9200
+    ports:
+      - "9200:9200"
+    networks:
+      back_net:
+        aliases:
+          - elasticsearch
+
+  kibana:
+    image: kibana:6.5.4
+    ports:
+      - "5601:5601"
+    networks:
+      back_net:
+        aliases:
+          - kibana
+      front_net:
+        aliases:
+          - kibana
+
+networks:
+  back_net:
+    name: back_net
+  front_net:
+    name: front_net

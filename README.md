@@ -3,6 +3,218 @@ ozyab09 microservices repository
 
 
 
+### Homework 20 (logging-1)
+[![Build Status](https://travis-ci.com/Otus-DevOps-2018-09/ozyab09_microservices.svg?branch=logging-1)](https://travis-ci.com/Otus-DevOps-2018-09/ozyab09_microservices)
+
+* Создание <i>docker-machine</i>:
+```
+docker-machine create --driver google \
+  --google-machine-image https://www.googleapis.com/compute/v1/projects/ubuntu-os-cloud/global/images/family/ubuntu-1604-lts \
+  --google-machine-type n1-standard-1 \
+  --google-open-port 5601/tcp \
+  --google-open-port 9292/tcp \
+  --google-open-port 9411/tcp \
+logging 
+```
+* Переключение на созданную <i>docker-machine</i>: `eval $(docker-machine env logging)`
+* Узнать ip-адрес: `docker-machine ip logging`
+
+* Новая версия приложения [reddit](https://github.com/express42/reddit/tree/microservices)
+
+* Сборка образов: 
+```
+for i in ui post-py comment; do cd src/$i; bash docker_build.sh; cd -; done
+```
+или:
+```
+/src/ui $ bash docker_build.sh && docker push $USER_NAME/ui
+/src/post-py $ bash docker_build.sh && docker push $USER_NAME/post
+/src/comment $ bash docker_build.sh && docker push $USER_NAME/comment
+```
+
+* Отдельный <i>compose</i>-файл для системы логирования:
+```yml
+docker/docker-compose-logging.yml
+
+version: '3.5'
+services:
+  fluentd:
+    image: ${USERNAME}/fluentd
+    ports:
+      - "24224:24224"
+      - "24224:24224/udp"
+  elasticsearch:
+    image: elasticsearch
+    expose:
+      - 9200
+    ports:
+      - "9200:9200"
+  kibana:
+    image: kibana
+    ports:
+      - "5601:5601"
+```
+* <i>Fluentd</i> - инструмент для отправки, агрегации и преобразования лог-сообщений:
+```yml
+logging/fluentd/Dockerfile
+
+FROM fluent/fluentd:v0.12
+RUN gem install fluent-plugin-elasticsearch --no-rdoc --no-ri --version 1.9.5
+RUN gem install fluent-plugin-grok-parser --no-rdoc --no-ri --version 1.0.0
+ADD fluent.conf /fluentd/etc
+```
+* Файл конфигурации <i>fluentd</i>:
+```
+logging/fluentd/fluent.conf
+
+<source>
+  @type forward #плагин <i>in_forward</i> для приема логов
+  port 24224
+  bind 0.0.0.0
+</source>
+<match *.**>
+  @type copy #плагин copy
+  <store>
+    @type elasticsearch #для перенаправления всех входящих логов в elasticseacrh
+    host elasticsearch
+    port 9200
+    logstash_format true
+    logstash_prefix fluentd
+    logstash_dateformat %Y%m%d
+    include_tag_key true
+    type_name access_log
+    tag_key @log_name
+    flush_interval 1s
+  </store>
+  <store>
+    @type stdout #а также в stdout
+  </store>
+</match>
+```
+
+* Сборка образа <i>fluentd</i>: `docker build -t $USER_NAME/fluentd .`
+
+* Просмотр логов <i>post</i> сервиса: `docker-compose logs -f post`
+
+* Драйвер для логирования для сервиса <i>post</i> внутри <i>compose</i>-файла:
+```yml
+docker/docker-compose.yml
+
+version: '3.5'
+services:
+  post:
+    image: ${USER_NAME}/post
+    environment:
+      - POST_DATABASE_HOST=post_db
+      - POST_DATABASE=posts
+    depends_on:
+      - post_db
+    ports:
+      - "5000:5000"
+    logging:
+      driver: "fluentd"
+      options:
+        fluentd-address: localhost:24224
+        tag: service.post
+```
+
+* Запуск инфраструктуры централизованной системы логирования и перезапуск сервисов приложения:
+```
+docker-compose -f docker-compose-logging.yml up -d
+docker-compose down
+docker-compose up -d 
+```
+* <i>Kibana</i> будет доступна по адресу http://logging-ip:5061. Необходимо создать индекс паттерн <i>fluentd-*</i>
+* Поле <i>log</i> документа <i>elasticsearch</i> содержит в себе <i>JSON</i>-объект. Необходимо выделить эту информацию в поля, чтобы иметь возможность производить по ним поиск. Это достигается за счет использования фильтров для выделения нужной информации
+* Добавление фильтра для парсинга <i>json</i>-логов, приходящих от <i>post</i>-сервиса, в конфиг <i>fluentd</i>:
+```
+logging/fluentd/fluent.conf
+
+<source>
+  @type forward
+  port 24224
+  bind 0.0.0.0
+</source>
+<filter service.post>
+  @type parser
+  format json
+  key_name log
+</filter>
+<match *.**>
+  @type copy
+...
+```
+
+* Пересборка образа и перезапуск сервиса <i>fluentd</i>:
+```
+logging/fluentd $ docker build -t $USER_NAME/fluentd .
+docker/ $ docker-compose -f docker-compose-logging.yml up -d fluentd 
+```
+* По аналогии с <i>post</i>-сервисом необходимо для <i>ui</i>-сервиса определить драйвер для логирования <i>fluentd</i> в <i>compose</i>-файле:
+```yml
+docker/docker-compose.yml
+
+...
+logging:
+  driver: "fluentd"
+  options:
+    fluentd-address: localhost:24224
+    tag: service.post
+...
+```
+* Перезапуск <i>ui</i> сервиса:
+```
+docker-compose stop ui
+docker-compose rm ui
+docker-compose up -d 
+```
+
+* Когда приложение или сервис не пишет структурированные логи, используются регулярные выражения для их парсинга. Выделение информации из лога <i>UI</i>-сервиса в поля:
+```
+logging/fluentd/fluent.conf
+
+<filter service.ui>
+  @type parser
+  format /\[(?<time>[^\]]*)\]  (?<level>\S+) (?<user>\S+)[\W]*service=(?<service>\S+)[\W]*event=(?<event>\S+)[\W]*(?:path=(?<path>\S+)[\W]*)?request_id=(?<request_id>\S+)[\W]*(?:remote_addr=(?<remote_addr>\S+)[\W]*)?(?:method= (?<method>\S+)[\W]*)?(?:response_status=(?<response_status>\S+)[\W]*)?(?:message='(?<message>[^\']*)[\W]*)?/
+  key_name log
+</filter>
+```
+
+* Для облегчения задачи парсинга вместо стандартных регулярок можно использовать <i>grok</i>-шаблоны. <i>Grok</i> - это именованные шаблоны регулярных выражений. Можно использовать готовый <i>regexp</i>, сославшись на него как на функцию:
+```
+docker/fluentd/fluent.conf
+
+...
+<filter service.ui>
+  @type parser
+  format grok
+  grok_pattern %{RUBY_LOGGER}
+  key_name log
+</filter> 
+...
+```
+
+* Часть логов нужно еще распарсить. Для этого можно использовать несколько <i>Grok</i>-ов по очереди:
+```
+docker/fluentd/fluent.conf
+
+<filter service.ui>
+  @type parser
+  format grok
+  grok_pattern service=%{WORD:service} \| event=%{WORD:event} \| request_id=%{GREEDYDATA:request_id} \| message='%{GREEDYDATA:message}'
+  key_name message
+  reserve_data true
+</filter>
+
+<filter service.ui>
+  @type parser
+  format grok
+  grok_pattern service=%{WORD:service} \| event=%{WORD:event} \| path=%{GREEDYDATA:path} \| request_id=%{GREEDYDATA:request_id} \| remote_addr=%{IP:remote_addr} \| method= %{WORD:method} \| response_status=%{WORD:response_status}
+  key_name message
+  reserve_data true
+</filter>
+```
+
 ### Homework 19 (monitoring-2)
 [![Build Status](https://travis-ci.com/Otus-DevOps-2018-09/ozyab09_microservices.svg?branch=monitoring-2)](https://travis-ci.com/Otus-DevOps-2018-09/ozyab09_microservices)
 
