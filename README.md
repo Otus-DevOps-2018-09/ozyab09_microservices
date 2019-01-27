@@ -2,6 +2,588 @@
 ozyab09 microservices repository
 
 
+### Homework 22 (kubernetes-2)
+[![Build Status](https://travis-ci.com/Otus-DevOps-2018-09/ozyab09_microservices.svg?branch=kubernetes-2)](https://travis-ci.com/Otus-DevOps-2018-09/ozyab09_microservices)
+
+* Для локальной разработки необходимо:
+- [kubectl](https://kubernetes.io/docs/tasks/tools/install-kubectl/)
+- директория <i>~/.kube</i>
+- minikube:
+```
+brew cask install minikube
+```
+или
+```
+curl -Lo minikube https://storage.googleapis.com/minikube/releases/v0.27.0/
+minikube-darwin-amd64 && chmod +x minikube && sudo mv minikube /usr/local/
+bin/
+```
+
+Для OS X понадобится гипервизор xhyve driver, VirtualBox, или VMware Fusion.
+
+* Запуск Minicube-кластера: `minikube start`
+> Если нужна конкретная версия kubernetes, следует указывать флаг `--kubernetes-version <version> (v1.8.0)`
+
+
+> По-умолчанию используется VirtualBox. Если используется другой гипервизор, то необходим флаг `--vm-driver=<hypervisor `
+
+* Minikube-кластер развернут. Автоматически был настроен конфиг kubectl.
+
+Проверим: `kubectl get nodes`
+
+> output:
+```
+NAME       STATUS   ROLES    AGE   VERSION
+minikube   Ready    master   25s   v1.13.2
+```
+* Манифест kubernetes в формате yml:
+```yml
+~/.kube/config
+
+apiVersion: v1
+clusters: ## список кластеров
+- cluster:
+    certificate-authority: ~/.minikube/ca.crt
+    server: https://192.168.99.100:8443
+  name: minikube
+contexts: ## список контекстов
+- context:
+    cluster: minikube
+    user: minikube
+  name: minikube
+current-context: minikube
+kind: Config
+preferences: {}
+users: ## список пользователей
+- name: minikube
+  user:
+    client-certificate: ~/.minikube/client.crt
+    client-key: ~/.minikube/client.key
+```
+
+* Обычный порядок конфигурирования <i>kubectl</i>:
+1) Создание cluster'a:
+```
+$ kubectl config set-cluster … cluster_name
+```
+2) Создание данных пользователя (credentials):
+```
+$ kubectl config set-credentials … user_name
+```
+3) Создание контекста:
+```
+$ kubectl config set-context context_name \
+  --cluster=cluster_name \
+  --user=user_name
+```
+4) Использование контекста:
+```
+$ kubectl config use-context context_name
+```
+Таким образом, <i>kubectl</i> конфигурируется для подключения к разным кластерам, под разными пользователями. 
+
+Текущий контекст: `$ kubectl config current-context`
+> output
+```
+minikube
+```
+Список всех контекстов: `$ kubectl config get-contexts`
+
+* Основные объекты - это ресурсы <i>Deployment</i>
+
+Основные задачи <i>Deployment</i>:
+
+1. Создание ReplicationSet (следит, чтобы число запущенных Pod-ов соответствовало описанному)
+2. Ведение истории версий запущенных Pod-ов (для различных стратегий деплоя, для возможностей отката)
+3. Описание процесса деплоя (стратегия, параметры стратегий)
+
+* Файл <i>kubernetes/reddit/ui-deployment.yml</i>:
+```yml
+kubernetes/reddit/ui-deployment.yml
+
+---
+apiVersion: apps/v1beta2
+kind: Deployment
+metadata:
+  name: ui
+  labels:
+    app: reddit
+    component: ui
+spec:
+  replicas: 3
+  selector:         ## selector описывает, как ему отслеживать POD-ы.
+    matchLabels:    ## В данном случае - контроллер будет считать POD-ы с метками:
+      app: reddit   ## app=reddit и component=ui
+      component: ui
+  template:
+    metadata:
+      name: ui-pod
+      labels:       ## Поэтому важно в описании POD-а задать
+        app: reddit ## нужные метки (labels) 
+        component: ui
+    spec:
+      containers:
+      - image: ozyab/ui
+        name: ui
+```
+
+* Запуск в <i>Minikube</i> ui-компоненты:
+```
+$ kubectl apply -f ui-deployment.yml
+```
+> output
+```
+deployment "ui" created
+```
+Проверка запущенных deployment'ов:
+```
+$ kubectl get deployment 
+```
+> output
+```
+NAME   READY   UP-TO-DATE   AVAILABLE   AGE
+ui     3/3     3            3           2m27s
+```
+`kubectl apply -f <filename>` может принимать не только отдельный файл, но и папку с ними. Например:
+```
+$ kubectl apply -f ./kubernetes/reddit 
+```
+
+* Используя <i>selector</i>, найдем POD-ы приложения:
+```
+$ kubectl get pods --selector component=ui 
+```
+> output
+```
+NAME                  READY   STATUS    RESTARTS   AGE
+ui-84994b4554-5m4cb   1/1     Running   0          3m20s
+ui-84994b4554-7gnqf   1/1     Running   0          3m25s
+ui-84994b4554-zhfr6   1/1     Running   0          4m48s
+```
+Проброс порта на pod:
+```
+$ kubectl port-forward <pod-name> 8080:9292
+```
+> output
+```
+Forwarding from 127.0.0.1:8080 -> 9292
+Forwarding from [::1]:8080 -> 9292
+```
+После этого можно перейти по адресу http://127.0.0.1:8080
+![Microservices Reddit in ui container](images/hw22_1.png)
+
+
+* Файл <i>kubernetes/reddit/comment-deployment.yml</i>:
+```yml
+kubernetes/reddit/comment-deployment.yml
+
+---
+apiVersion: apps/v1beta2
+kind: Deployment
+metadata:
+  name: comment
+  labels:
+    app: reddit
+    component: comment
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: reddit
+      component: comment
+  template:
+    metadata:
+      name: comment
+      labels:
+        app: reddit
+        component: comment
+    spec:
+      containers:
+      - image: ozyab/comment # Меняется только имя образа
+        name: comment
+```
+* Запрос созданных подов:
+```
+$ kubectl get pods --selector component=comment
+```
+
+Выполнив проброс порта в pod, и перейдя по адресу http://127.0.0.1:8080/healthcheck увидим:
+
+![Comment component healthcheck](images/hw22_2.png)
+
+* Файл <i>kubernetes/reddit/post-deployment.yml</i>:
+```yml
+kubernetes/reddit/post-deployment.yml
+
+---
+apiVersion: apps/v1beta2
+kind: Deployment
+metadata:
+  name: post
+  labels:
+    app: reddit
+    component: post
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: reddit
+      component: post
+  template:
+    metadata:
+      name: post-pod
+      labels:
+        app: reddit
+        component: post
+    spec:
+      containers:
+      - image: ozyab/post
+        name: post
+```
+Применение deployment: `kubectl apply -f post-deployment.yml`
+
+![Post component healthcheck](images/hw22_3.png)
+
+* Файл <i>kubernetes/reddit/mongo-deployment.yml</i>:
+```yml
+kubernetes/reddit/mongo-deployment.yml
+
+---
+apiVersion: apps/v1beta2
+kind: Deployment
+metadata:
+  name: mongo
+  labels:
+    app: reddit
+    component: mongo
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: reddit
+      component: mongo
+  template:
+    metadata:
+      name: mongo
+      labels:
+        app: reddit
+        component: mongo
+    spec:
+      containers:
+      - image: mongo:3.2
+        name: mongo
+        volumeMounts:   #точка монтирования в контейнере (не в POD-е)
+        - name: mongo-persistent-storage
+          mountPath: /data/db
+      volumes:   #Ассоциированные с POD-ом Volume-ы
+      - name: mongo-persistent-storage
+        emptyDir: {}
+```
+
+* Для связи компонент между собой и с внешним миром используется объект Service - абстракция, которая определяет набор POD-ов (Endpoints) и способ доступа к ним.
+
+Для связи ui с post и comment нужно создать им по объекту Service.
+
+Файл <i>kubernetes/reddit/comment-service.yml</i>:
+```yml
+kubernetes/reddit/comment-service.yml
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: comment  # в DNS появится запись для comment
+  labels:
+    app: reddit
+    component: comment
+spec:
+  ports:           # При обращении на адрес post:9292 изнутри любого из POD-ов
+  - port: 9292      # текущего namespace нас переправит на 9292-ный
+    protocol: TCP    # порт одного из POD-ов приложения post,
+    targetPort: 9292  # выбранных по label-ам
+  selector:
+    app: reddit
+    component: comment
+```
+После применения `comment-service.yml` найдем по label'ам соответствующие PODы:
+```
+$ kubectl describe service comment | grep Endpoints
+```
+> output
+```
+Endpoints:   172.17.0.4:9292,172.17.0.6:9292,172.17.0.9:9292
+```
+Выполним команду `nslookup comment` из контейнера post:
+```
+$ kubectl get pods --selector component=post
+NAME                    READY   STATUS    RESTARTS   AGE
+post-5c45f6d5c8-5dpx7   1/1     Running   0          17m
+post-5c45f6d5c8-cb8fv   1/1     Running   0          17m
+post-5c45f6d5c8-k9s5h   1/1     Running   0          17m
+$ kubectl exec -ti post-5c45f6d5c8-5dpx7 nslookup comment
+nslookup: can't resolve '(null)': Name does not resolve
+Name:      comment
+Address 1: 10.105.95.41 comment.default.svc.cluster.local
+```
+Видим, что получен ответ от DNS.
+
+* Аналогичным образом развернем service для post:
+```yml
+kubernetes/reddit/post-service.yml
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: post 
+  labels:
+    app: reddit
+    component: post
+spec:
+  ports:
+  - port: 9292
+    protocol: TCP
+    targetPort: 9292
+  selector:
+    app: reddit
+    component: post
+```
+* Post и Comment также используют mongodb, следовательно ей тоже нужен объект Service:
+```yml
+kubernetes/reddit/mongodb-service.yml
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: mongodb
+  labels:
+    app: reddit
+    component: mongo
+spec:
+  ports:
+  - port: 27017
+    protocol: TCP
+    targetPort: 27017
+  selector:
+    app: reddit
+    component: mongo
+```
+Деплой:
+```
+kubectl apply -f mongodb-service.yml
+```
+
+* Приложение ищет адрес comment_db, а не mongodb. Аналогично и сервис comment ищет post_db.
+
+Эти адреса заданы в их Dockerfile-ах в виде переменных окружения:
+```
+post/Dockerfile
+…
+ENV POST_DATABASE_HOST=post_db
+```
+```
+comment/Dockerfile
+…
+ENV COMMENT_DATABASE_HOST=comment_db
+```
+Создадим сервис:
+```yml
+comment-mongodb-service.yml
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: comment-db
+  labels:
+    app: reddit
+    component: mongo
+    comment-db: "true" # метка, чтобы различать сервисы
+spec:
+  ports:
+  - port: 27017
+    protocol: TCP
+    targetPort: 27017
+  selector:
+    app: reddit
+    component: mongo
+    comment-db: "true" # отдельный лейбл для comment-db
+```
+Файл <i>mongo-deployment.yml</i>:
+```yml
+kubernetes/reddit/mongo-deployment.yml
+
+---
+apiVersion: apps/v1beta2
+kind: Deployment
+metadata:
+  name: mongo
+  labels:
+  ...
+    comment-db: "true"
+...
+  template:
+    metadata:
+      name: mongo
+      labels:
+        ...
+        comment-db: "true"
+```
+Файл <i>comment-deployment.yml</i>:
+```yml
+kubernetes/reddit/comment-deployment.yml
+
+---
+apiVersion: apps/v1beta2
+kind: Deployment
+metadata:
+  name: comment
+  labels:
+    app: reddit
+    component: comment
+...
+    spec:
+      containers:
+      - image: ozyab/comment
+        name: comment
+        env:
+        - name: COMMENT_DATABASE_HOST
+          value: comment-db
+```
+Также необходимо обновить файл <i>mongo-deployment.yml</i>, чтобы новый Service смог найти нужный POD:
+```yml
+kubernetes/reddit/mongo-deployment.yml
+
+---
+apiVersion: apps/v1beta2
+kind: Deployment
+metadata:
+  name: mongo
+  labels:
+    ..
+    comment-db: "true"
+  template:
+    metadata:
+      name: mongo
+      labels:
+        ..
+        comment-db: "true"
+```
+
+* Необходимо обеспечить доступ к ui-сервису снаружи. Для этого нам понадобится Service для UI-компоненты <i>ui-service.yml</i>:
+```yml
+kubernetes/reddit/ui-service.yml
+...
+  spec:
+  - nodePort: 32092 #можно задать свой порт из диапазона 30000-32767
+    type: NodePort
+```
+В описании service:
+- <i>NodePort</i> - для доступа снаружи кластера
+- <i>port</i> - для доступа к сервису изнутри кластера
+
+Команда `minikube service ui` откроет в браузере страницу сервиса.
+
+Список всех сервисов с URL: ` minikube services list`
+
+#### Namespace
+
+<i>Namespace</i> - это "виртуальный" кластер Kubernetes внутри самого Kubernetes. Внутри каждого такого кластера находятся свои объекты (POD-ы, Service-ы, Deployment-ы и т.д.), кроме объектов, общих на все namespace-ы (nodes, ClusterRoles, PersistentVolumes). 
+
+В разных namespace-ах могут находится объекты с одинаковым именем, но в рамках одного namespace имена
+объектов должны быть уникальны.
+
+При старте Kubernetes кластер уже имеет 3 namespace:
+- <i>default</i> - для объектов для которых не определен другой Namespace (в нем мы работали все это время)
+- <i>kube-system</i> - для объектов созданных Kubernetes’ом и для управления им
+- <i>kube-public</i> - для объектов к которым нужен доступ из любой точки кластера
+Для того, чтобы выбрать конкретное пространство имен, нужно указать флаг `-n <namespace>` или `--namespace <namespace>` при запуске <i>kubectl</i>
+
+* Отделим среду для разработки приложения от всего остального кластера, для чего создадим свой <i>Namespace</i> `dev`:
+```
+dev-namespace.yml: 
+
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: dev
+```
+Создание namespace dev: `$ kubectl apply -f dev-namespace.yml`
+* Добавим инфу об окружении внутрь контейнера UI:
+```yml
+kubernetes/reddit/ui-deployment.yml
+
+---
+apiVersion: apps/v1beta2
+kind: Deployment
+...
+    spec:
+      containers:
+      ...
+        env:
+        - name: ENV #Извлекаем значения из контекста запуска
+          valueFrom:
+            fieldRef:
+              fieldPath: metadata.namespace
+```
+После этого: `$ kubectl apply -f ui-deployment.yml -n dev`
+
+#### Разворачиваем Kubernetes в GKE (Google Kubernetes Engine)
+
+Переходим на страницу Kubernetes Engine: https://console.cloud.google.com/kubernetes/list?project=${PROJECT_NAME}
+и создаем кластер.
+
+Компоненты управления кластером запускаются в container engine и управляются Google:
+- kube-apiserver
+- kube-scheduler
+- kube-controller-manager
+- etcd 
+Рабочая нагрузка (собственные POD-ы), аддоны, мониторинг, логирование и т.д. запускаются на рабочих нодах.
+Рабочие ноды - стандартные ноды Google compute engine. Их можно увидеть в списке запущенных узлов. 
+
+Подключимся к GKE для запуска нашего приложения. Для этого жмем <i>Подключиться</i> на странице кластеров.
+Будет выдана команда
+```
+gcloud container clusters get-credentials standard-cluster-1 --zone us-central1-a --project ${PROJECT_NAME}
+```
+В файл <i>~/.kube/config</i> будут добавлены <i>user</i>, <i>cluster</i> и <i>context</i> для подключения к кластеру в GKE. Также текущий контекст будет выставлен для подключения к этому кластеру.
+
+Проверим текущий контекст: `$ kubectl config current-context`
+> output:
+```
+gke_keen-${PROJECT_NAME}_us-central1-a_standard-cluster-1
+```
+Создадим dev namespace: `$ kubectl apply -f ./kubernetes/reddit/dev-namespace.yml`
+
+Деплой всех приложений в namespace dev: `$ kubectl apply -f ./kubernetes/reddit/ -n dev`
+
+Открытие диапазона kubernetes портов в firewall:
+```gcloud compute --project=${PROJECT_NAME} \
+     firewall-rules create kubernetes-nodeports \
+     --direction=INGRESS \
+     --priority=1000 \
+     --network=default \
+     --action=ALLOW \
+     --rules=tcp:30000-32767 \
+     --source-ranges=0.0.0.0/0
+```
+* Найдем внешний IP-адрес любой ноды из кластера: `$ kubectl get nodes -o wide`
+```
+NAME                                                STATUS   ROLES    AGE   VERSION         EXTERNAL-IP
+gke-standard-cluster-1-default-pool-2dd96181-qt7q   Ready    <none>   11h   v1.10.9-gke.5   XX.XXX.XX.XXX
+gke-standard-cluster-1-default-pool-d3cd4782-7j9s   Ready    <none>   11h   v1.10.9-gke.5   XX.XXX.XX.XXX
+```
+Порт публикации сервиса <i>ui</i>: `$ kubectl describe service ui -n dev | grep NodePort`
+```
+Type:                     NodePort
+NodePort:                 <unset>  32092/TCP
+```
+Можно перейти на любой из внешних IP-адресов для открытия страницы http://XX.XXX.XX.XXX:32092
+
+![Readdit app deployed in GKE](images/hw22_4.png)
+
 ### Homework 21 (kubernetes-1)
 [![Build Status](https://travis-ci.com/Otus-DevOps-2018-09/ozyab09_microservices.svg?branch=kubernetes-1)](https://travis-ci.com/Otus-DevOps-2018-09/ozyab09_microservices)
 
@@ -186,8 +768,7 @@ If this is your first time connecting to a compute instance SSH keys will be gen
 
 Generate the CA configuration file, certificate, and private key:
 
-```json
-{
+```
 cat > ca-config.json <<EOF
 {
   "signing": {
@@ -224,16 +805,13 @@ cat > ca-csr.json <<EOF
 EOF
 
 cfssl gencert -initca ca-csr.json | cfssljson -bare ca
-
-}
 ```
 
 * Client and Server Certificates
 
 Generate the admin client certificate and private key:
 
-```json
-{
+```
 cat > admin-csr.json <<EOF
 {
   "CN": "admin",
@@ -259,7 +837,6 @@ cfssl gencert \
   -config=ca-config.json \
   -profile=kubernetes \
   admin-csr.json | cfssljson -bare admin
-}
 ```
 
 * The Kubelet Client Certificates
@@ -267,7 +844,7 @@ cfssl gencert \
 Kubernetes uses a [special-purpose authorization mode](https://kubernetes.io/docs/admin/authorization/node/) called Node Authorizer, that specifically authorizes API requests made by [Kubelets](https://kubernetes.io/docs/concepts/overview/components/#kubelet). 
 
 Generate a certificate and private key for each Kubernetes worker node:
-```json
+```
 for instance in worker-0 worker-1 worker-2; do
 cat > ${instance}-csr.json <<EOF
 {
@@ -307,7 +884,7 @@ done
 * The Controller Manager Client Certificate
 
 Generate the <i>kube-controller-manager</i> client certificate and private key:
-```json
+```
 cat > kube-controller-manager-csr.json <<EOF
 {
   "CN": "system:kube-controller-manager",
@@ -339,7 +916,7 @@ cfssl gencert \
 * The Kube Proxy Client Certificate
 
 Generate the <i>kube-proxy</i> client certificate and private key:
-```json
+```
 cat > kube-proxy-csr.json <<EOF
 {
   "CN": "system:kube-proxy",
@@ -370,7 +947,7 @@ cfssl gencert \
 * The Scheduler Client Certificate
 
 Generate the <i>kube-scheduler</i> client certificate and private key:
-```json
+```
 cat > kube-scheduler-csr.json <<EOF
 {
   "CN": "system:kube-scheduler",
@@ -405,7 +982,7 @@ The kubernetes-the-hard-way static IP address will be included in the list of su
 
 Generate the Kubernetes API Server certificate and private key:
 
-```json
+```
 KUBERNETES_PUBLIC_ADDRESS=$(gcloud compute addresses describe kubernetes-the-hard-way \
   --region $(gcloud config get-value compute/region) \
   --format 'value(address)')
@@ -443,7 +1020,7 @@ cfssl gencert \
 The Kubernetes Controller Manager leverages a key pair to generate and sign service account tokens as describe in the [managing service accounts](https://kubernetes.io/docs/admin/service-accounts-admin/) documentation.
 
 Generate the <i>service-account</i> certificate and private key:
-```json
+```
 cat > service-account-csr.json <<EOF
 {
   "CN": "service-accounts",
@@ -631,13 +1208,13 @@ Generate a kubeconfig file for the <i>admin</i> user:
 
 * Distribute the Kubernetes Configuration Files
 Copy the appropriate <i>kubelet</i> and <i>kube-proxy</i> kubeconfig files to each worker instance:
-```json
+```
 for instance in worker-0 worker-1 worker-2; do
   gcloud compute scp ${instance}.kubeconfig kube-proxy.kubeconfig ${instance}:~/
 done
 ```
 Copy the appropriate <i>kube-controller-manager</i> and <i>kube-scheduler</i> kubeconfig files to each controller instance:
-```json
+```
 for instance in controller-0 controller-1 controller-2; do
   gcloud compute scp admin.kubeconfig kube-controller-manager.kubeconfig kube-scheduler.kubeconfig ${instance}:~/
 done
@@ -773,59 +1350,1093 @@ f98dc20bce6225a0, started, controller-0, https://10.240.0.10:2380, https://10.24
 ffed16798470cab5, started, controller-1, https://10.240.0.11:2380, https://10.240.0.11:2379
 ```
 
+#### Bootstrapping the Kubernetes Control Plane
+
+In this lab you will bootstrap the Kubernetes control plane across three compute instances and configure it for high availability. You will also create an external load balancer that exposes the Kubernetes API Servers to remote clients. The following components will be installed on each node: Kubernetes API Server, Scheduler, and Controller Manager.
+
+The commands in this lab must be run on each controller instance: <i>controller-0</i>, <i>controller-1</i>, and <i>controller-2</i>. Login to each controller instance using the gcloud command. Example: `gcloud compute ssh controller-0`
+
+* Provision the Kubernetes Control Plane
+
+Create the Kubernetes configuration directory:
+
+```
+sudo mkdir -p /etc/kubernetes/config
+```
+
+* Download and Install the Kubernetes Controller Binaries
+
+Download the official Kubernetes release binaries:
+```
+wget -q --show-progress --https-only --timestamping \
+  "https://storage.googleapis.com/kubernetes-release/release/v1.12.0/bin/linux/amd64/kube-apiserver" \
+  "https://storage.googleapis.com/kubernetes-release/release/v1.12.0/bin/linux/amd64/kube-controller-manager" \
+  "https://storage.googleapis.com/kubernetes-release/release/v1.12.0/bin/linux/amd64/kube-scheduler" \
+  "https://storage.googleapis.com/kubernetes-release/release/v1.12.0/bin/linux/amd64/kubectl"
+```
+
+* Install the Kubernetes binaries:
+
+```
+chmod +x kube-apiserver kube-controller-manager kube-scheduler kubectl
+sudo mv kube-apiserver kube-controller-manager kube-scheduler kubectl /usr/local/bin/
+```
+
+* Configure the Kubernetes API Server
+```
+  sudo mkdir -p /var/lib/kubernetes/
+
+  sudo mv ca.pem ca-key.pem kubernetes-key.pem kubernetes.pem \
+    service-account-key.pem service-account.pem \
+    encryption-config.yaml /var/lib/kubernetes/
+```
+
+The instance internal IP address will be used to advertise the API Server to members of the cluster. Retrieve the internal IP address for the current compute instance:
+```
+INTERNAL_IP=$(curl -s -H "Metadata-Flavor: Google" \
+  http://metadata.google.internal/computeMetadata/v1/instance/network-interfaces/0/ip)
+```
+
+Create the <i>kube-apiserver.service</i> systemd unit file:
+```
+cat <<EOF | sudo tee /etc/systemd/system/kube-apiserver.service
+[Unit]
+Description=Kubernetes API Server
+Documentation=https://github.com/kubernetes/kubernetes
+
+[Service]
+ExecStart=/usr/local/bin/kube-apiserver \\
+  --advertise-address=${INTERNAL_IP} \\
+  --allow-privileged=true \\
+  --apiserver-count=3 \\
+  --audit-log-maxage=30 \\
+  --audit-log-maxbackup=3 \\
+  --audit-log-maxsize=100 \\
+  --audit-log-path=/var/log/audit.log \\
+  --authorization-mode=Node,RBAC \\
+  --bind-address=0.0.0.0 \\
+  --client-ca-file=/var/lib/kubernetes/ca.pem \\
+  --enable-admission-plugins=Initializers,NamespaceLifecycle,NodeRestriction,LimitRanger,ServiceAccount,DefaultStorageClass,ResourceQuota \\
+  --enable-swagger-ui=true \\
+  --etcd-cafile=/var/lib/kubernetes/ca.pem \\
+  --etcd-certfile=/var/lib/kubernetes/kubernetes.pem \\
+  --etcd-keyfile=/var/lib/kubernetes/kubernetes-key.pem \\
+  --etcd-servers=https://10.240.0.10:2379,https://10.240.0.11:2379,https://10.240.0.12:2379 \\
+  --event-ttl=1h \\
+  --experimental-encryption-provider-config=/var/lib/kubernetes/encryption-config.yaml \\
+  --kubelet-certificate-authority=/var/lib/kubernetes/ca.pem \\
+  --kubelet-client-certificate=/var/lib/kubernetes/kubernetes.pem \\
+  --kubelet-client-key=/var/lib/kubernetes/kubernetes-key.pem \\
+  --kubelet-https=true \\
+  --runtime-config=api/all \\
+  --service-account-key-file=/var/lib/kubernetes/service-account.pem \\
+  --service-cluster-ip-range=10.32.0.0/24 \\
+  --service-node-port-range=30000-32767 \\
+  --tls-cert-file=/var/lib/kubernetes/kubernetes.pem \\
+  --tls-private-key-file=/var/lib/kubernetes/kubernetes-key.pem \\
+  --v=2
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
+EOF
+```
+
+* Configure the Kubernetes Controller Manager
+
+Move the <i>kube-controller-manager</i> kubeconfig into place:
+```
+sudo mv kube-controller-manager.kubeconfig /var/lib/kubernetes/
+```
+Create the <i>kube-controller-manager.service</i> systemd unit file:
+```
+cat <<EOF | sudo tee /etc/systemd/system/kube-controller-manager.service
+[Unit]
+Description=Kubernetes Controller Manager
+Documentation=https://github.com/kubernetes/kubernetes
+
+[Service]
+ExecStart=/usr/local/bin/kube-controller-manager \\
+  --address=0.0.0.0 \\
+  --cluster-cidr=10.200.0.0/16 \\
+  --cluster-name=kubernetes \\
+  --cluster-signing-cert-file=/var/lib/kubernetes/ca.pem \\
+  --cluster-signing-key-file=/var/lib/kubernetes/ca-key.pem \\
+  --kubeconfig=/var/lib/kubernetes/kube-controller-manager.kubeconfig \\
+  --leader-elect=true \\
+  --root-ca-file=/var/lib/kubernetes/ca.pem \\
+  --service-account-private-key-file=/var/lib/kubernetes/service-account-key.pem \\
+  --service-cluster-ip-range=10.32.0.0/24 \\
+  --use-service-account-credentials=true \\
+  --v=2
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
+EOF
+```
+
+* Configure the Kubernetes Scheduler
+
+Move the <i>kube-scheduler</i> kubeconfig into place:
+```
+sudo mv kube-scheduler.kubeconfig /var/lib/kubernetes/
+```
+Create the <i>kube-scheduler.yaml</i> configuration file:
+```yml
+cat <<EOF | sudo tee /etc/kubernetes/config/kube-scheduler.yaml
+apiVersion: componentconfig/v1alpha1
+kind: KubeSchedulerConfiguration
+clientConnection:
+  kubeconfig: "/var/lib/kubernetes/kube-scheduler.kubeconfig"
+leaderElection:
+  leaderElect: true
+EOF
+```
+Create the <i>kube-scheduler.service</i> systemd unit file:
+```
+cat <<EOF | sudo tee /etc/systemd/system/kube-scheduler.service
+[Unit]
+Description=Kubernetes Scheduler
+Documentation=https://github.com/kubernetes/kubernetes
+
+[Service]
+ExecStart=/usr/local/bin/kube-scheduler \\
+  --config=/etc/kubernetes/config/kube-scheduler.yaml \\
+  --v=2
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
+EOF
+```
+* Start the Controller Services
+```
+  sudo systemctl daemon-reload
+  sudo systemctl enable kube-apiserver kube-controller-manager kube-scheduler
+  sudo systemctl start kube-apiserver kube-controller-manager kube-scheduler
+```
+
+* Enable HTTP Health Checks
+A [Google Network Load Balancer](https://cloud.google.com/compute/docs/load-balancing/network) will be used to distribute traffic across the three API servers and allow each API server to terminate TLS connections and validate client certificates. The network load balancer only supports HTTP health checks which means the HTTPS endpoint exposed by the API server cannot be used. As a workaround the nginx webserver can be used to proxy HTTP health checks. In this section nginx will be installed and configured to accept HTTP health checks on port <i>80</i> and proxy the connections to the API server on <i>https://127.0.0.1:6443/healthz</i>.
+
+Install a basic web server to handle HTTP health checks:
+```
+sudo apt-get install -y nginx
+```
+
+```
+cat > kubernetes.default.svc.cluster.local <<EOF
+server {
+  listen      80;
+  server_name kubernetes.default.svc.cluster.local;
+
+  location /healthz {
+     proxy_pass                    https://127.0.0.1:6443/healthz;
+     proxy_ssl_trusted_certificate /var/lib/kubernetes/ca.pem;
+  }
+}
+EOF
+```
+```
+  sudo mv kubernetes.default.svc.cluster.local \
+    /etc/nginx/sites-available/kubernetes.default.svc.cluster.local
+
+  sudo ln -s /etc/nginx/sites-available/kubernetes.default.svc.cluster.local /etc/nginx/sites-enabled/
+```
+```
+sudo systemctl restart nginx
+sudo systemctl enable nginx
+```
+
+* Verification
+```
+kubectl get componentstatuses --kubeconfig admin.kubeconfig
+```
+> output:
+```
+NAME                 STATUS    MESSAGE             ERROR
+controller-manager   Healthy   ok
+scheduler            Healthy   ok
+etcd-2               Healthy   {"health":"true"}
+etcd-0               Healthy   {"health":"true"}
+etcd-1               Healthy   {"health":"true"}
+```
+Test the nginx HTTP health check proxy:
+```
+curl -H "Host: kubernetes.default.svc.cluster.local" -i http://127.0.0.1/healthz
+```
+> output:
+```
+HTTP/1.1 200 OK
+Server: nginx/1.14.0 (Ubuntu)
+Date: Sun, 20 Jan 2019 19:54:16 GMT
+Content-Type: text/plain; charset=utf-8
+Content-Length: 2
+Connection: keep-alive
+```
+
+* RBAC for Kubelet Authorization
+
+In this section you will configure RBAC permissions to allow the Kubernetes API Server to access the Kubelet API on each worker node. Access to the Kubelet API is required for retrieving metrics, logs, and executing commands in pods.
+
+Create the <i>system:kube-apiserver-to-kubelet</i> [ClusterRole](https://kubernetes.io/docs/admin/authorization/rbac/#role-and-clusterrole) with permissions to access the Kubelet API and perform most common tasks associated with managing pods:
+```
+cat <<EOF | kubectl apply --kubeconfig admin.kubeconfig -f -
+apiVersion: rbac.authorization.k8s.io/v1beta1
+kind: ClusterRole
+metadata:
+  annotations:
+    rbac.authorization.kubernetes.io/autoupdate: "true"
+  labels:
+    kubernetes.io/bootstrapping: rbac-defaults
+  name: system:kube-apiserver-to-kubelet
+rules:
+  - apiGroups:
+      - ""
+    resources:
+      - nodes/proxy
+      - nodes/stats
+      - nodes/log
+      - nodes/spec
+      - nodes/metrics
+    verbs:
+      - "*"
+EOF
+```
+
+The Kubernetes API Server authenticates to the Kubelet as the <i>kubernetes</i> user using the client certificate as defined by the <i>--kubelet-client-certificate</i> flag.
+
+Bind the <i>system:kube-apiserver-to-kubelet</i> ClusterRole to the <i>kubernetes</i> user:
+```
+cat <<EOF | kubectl apply --kubeconfig admin.kubeconfig -f -
+apiVersion: rbac.authorization.k8s.io/v1beta1
+kind: ClusterRoleBinding
+metadata:
+  name: system:kube-apiserver
+  namespace: ""
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: system:kube-apiserver-to-kubelet
+subjects:
+  - apiGroup: rbac.authorization.k8s.io
+    kind: User
+    name: kubernetes
+EOF
+```
+
+* The Kubernetes Frontend Load Balancer
+
+In this section you will provision an external load balancer to front the Kubernetes API Servers. The <i>kubernetes-the-hard-way</i> static IP address will be attached to the resulting load balancer.
+
+Provision a Network Load Balancer. Create the external load balancer network resources:
+```
+  KUBERNETES_PUBLIC_ADDRESS=$(gcloud compute addresses describe kubernetes-the-hard-way \
+    --region $(gcloud config get-value compute/region) \
+    --format 'value(address)')
+
+  gcloud compute http-health-checks create kubernetes \
+    --description "Kubernetes Health Check" \
+    --host "kubernetes.default.svc.cluster.local" \
+    --request-path "/healthz"
+
+  gcloud compute firewall-rules create kubernetes-the-hard-way-allow-health-check \
+    --network kubernetes-the-hard-way \
+    --source-ranges 209.85.152.0/22,209.85.204.0/22,35.191.0.0/16 \
+    --allow tcp
+
+  gcloud compute target-pools create kubernetes-target-pool \
+    --http-health-check kubernetes
+
+  gcloud compute target-pools add-instances kubernetes-target-pool \
+   --instances controller-0,controller-1,controller-2
+
+  gcloud compute forwarding-rules create kubernetes-forwarding-rule \
+    --address ${KUBERNETES_PUBLIC_ADDRESS} \
+    --ports 6443 \
+    --region $(gcloud config get-value compute/region) \
+    --target-pool kubernetes-target-pool
+```
+
+* Verification
+Make a HTTP request for the Kubernetes version info:
+```
+curl --cacert ca.pem https://${KUBERNETES_PUBLIC_ADDRESS}:6443/version
+```
+
+> output:
+```
+{
+  "major": "1",
+  "minor": "12",
+  "gitVersion": "v1.12.0",
+  "gitCommit": "0ed33881dc4355495f623c6f22e7dd0b7632b7c0",
+  "gitTreeState": "clean",
+  "buildDate": "2018-09-27T16:55:41Z",
+  "goVersion": "go1.10.4",
+  "compiler": "gc",
+  "platform": "linux/amd64"
+}
+```
+
+#### Bootstrapping the Kubernetes Worker Nodes
+
+In this lab you will bootstrap three Kubernetes worker nodes. The following components will be installed on each node: [runc](https://github.com/opencontainers/runc), [gVisor](https://github.com/google/gvisor), [container networking plugins](https://github.com/containernetworking/cni), [containerd](https://github.com/containerd/containerd), [kubelet](https://kubernetes.io/docs/admin/kubelet), and [kube-proxy](https://kubernetes.io/docs/concepts/cluster-administration/proxies).
+
+* Provisioning a Kubernetes Worker Node
+
+Install the OS dependencies:
+
+```
+sudo apt-get update
+sudo apt-get -y install socat conntrack ipset
+```
+
+Download and Install Worker Binaries
+```
+wget -q --show-progress --https-only --timestamping \
+  https://github.com/kubernetes-sigs/cri-tools/releases/download/v1.12.0/crictl-v1.12.0-linux-amd64.tar.gz \
+  https://storage.googleapis.com/kubernetes-the-hard-way/runsc-50c283b9f56bb7200938d9e207355f05f79f0d17 \
+  https://github.com/opencontainers/runc/releases/download/v1.0.0-rc5/runc.amd64 \
+  https://github.com/containernetworking/plugins/releases/download/v0.6.0/cni-plugins-amd64-v0.6.0.tgz \
+  https://github.com/containerd/containerd/releases/download/v1.2.0-rc.0/containerd-1.2.0-rc.0.linux-amd64.tar.gz \
+  https://storage.googleapis.com/kubernetes-release/release/v1.12.0/bin/linux/amd64/kubectl \
+  https://storage.googleapis.com/kubernetes-release/release/v1.12.0/bin/linux/amd64/kube-proxy \
+  https://storage.googleapis.com/kubernetes-release/release/v1.12.0/bin/linux/amd64/kubelet
+```
+
+Create the installation directories:
+
+```
+sudo mkdir -p \
+  /etc/cni/net.d \
+  /opt/cni/bin \
+  /var/lib/kubelet \
+  /var/lib/kube-proxy \
+  /var/lib/kubernetes \
+  /var/run/kubernetes
+```
+Install the worker binaries:
+
+```
+  sudo mv runsc-50c283b9f56bb7200938d9e207355f05f79f0d17 runsc
+  sudo mv runc.amd64 runc
+  chmod +x kubectl kube-proxy kubelet runc runsc
+  sudo mv kubectl kube-proxy kubelet runc runsc /usr/local/bin/
+  sudo tar -xvf crictl-v1.12.0-linux-amd64.tar.gz -C /usr/local/bin/
+  sudo tar -xvf cni-plugins-amd64-v0.6.0.tgz -C /opt/cni/bin/
+  sudo tar -xvf containerd-1.2.0-rc.0.linux-amd64.tar.gz -C /
+```
+
+* Configure CNI Networking
+
+Retrieve the Pod CIDR range for the current compute instance:
+
+```
+POD_CIDR=$(curl -s -H "Metadata-Flavor: Google" \
+  http://metadata.google.internal/computeMetadata/v1/instance/attributes/pod-cidr)
+```
+
+Create the <i>bridge</i> network configuration file:
+
+```
+cat <<EOF | sudo tee /etc/cni/net.d/10-bridge.conf
+{
+    "cniVersion": "0.3.1",
+    "name": "bridge",
+    "type": "bridge",
+    "bridge": "cnio0",
+    "isGateway": true,
+    "ipMasq": true,
+    "ipam": {
+        "type": "host-local",
+        "ranges": [
+          [{"subnet": "${POD_CIDR}"}]
+        ],
+        "routes": [{"dst": "0.0.0.0/0"}]
+    }
+}
+EOF
+```
+
+Create the loopback network configuration file:
+```
+cat <<EOF | sudo tee /etc/cni/net.d/99-loopback.conf
+{
+    "cniVersion": "0.3.1",
+    "type": "loopback"
+}
+EOF
+```
+
+Create the <i>containerd</i> configuration file:
+```
+sudo mkdir -p /etc/containerd/
+```
+```
+cat << EOF | sudo tee /etc/containerd/config.toml
+[plugins]
+  [plugins.cri.containerd]
+    snapshotter = "overlayfs"
+    [plugins.cri.containerd.default_runtime]
+      runtime_type = "io.containerd.runtime.v1.linux"
+      runtime_engine = "/usr/local/bin/runc"
+      runtime_root = ""
+    [plugins.cri.containerd.untrusted_workload_runtime]
+      runtime_type = "io.containerd.runtime.v1.linux"
+      runtime_engine = "/usr/local/bin/runsc"
+      runtime_root = "/run/containerd/runsc"
+    [plugins.cri.containerd.gvisor]
+      runtime_type = "io.containerd.runtime.v1.linux"
+      runtime_engine = "/usr/local/bin/runsc"
+      runtime_root = "/run/containerd/runsc"
+EOF
+```
+Create the containerd.service systemd unit file:
+
+```
+cat <<EOF | sudo tee /etc/systemd/system/containerd.service
+[Unit]
+Description=containerd container runtime
+Documentation=https://containerd.io
+After=network.target
+
+[Service]
+ExecStartPre=/sbin/modprobe overlay
+ExecStart=/bin/containerd
+Restart=always
+RestartSec=5
+Delegate=yes
+KillMode=process
+OOMScoreAdjust=-999
+LimitNOFILE=1048576
+LimitNPROC=infinity
+LimitCORE=infinity
+
+[Install]
+WantedBy=multi-user.target
+EOF
+```
+
+* Configure the Kubelet
+```
+sudo mv ${HOSTNAME}-key.pem ${HOSTNAME}.pem /var/lib/kubelet/
+sudo mv ${HOSTNAME}.kubeconfig /var/lib/kubelet/kubeconfig
+sudo mv ca.pem /var/lib/kubernetes/
+```
+
+Create the <i>kubelet-config.yaml</i> configuration file:
+
+```
+cat <<EOF | sudo tee /var/lib/kubelet/kubelet-config.yaml
+kind: KubeletConfiguration
+apiVersion: kubelet.config.k8s.io/v1beta1
+authentication:
+  anonymous:
+    enabled: false
+  webhook:
+    enabled: true
+  x509:
+    clientCAFile: "/var/lib/kubernetes/ca.pem"
+authorization:
+  mode: Webhook
+clusterDomain: "cluster.local"
+clusterDNS:
+  - "10.32.0.10"
+podCIDR: "${POD_CIDR}"
+resolvConf: "/run/systemd/resolve/resolv.conf"
+runtimeRequestTimeout: "15m"
+tlsCertFile: "/var/lib/kubelet/${HOSTNAME}.pem"
+tlsPrivateKeyFile: "/var/lib/kubelet/${HOSTNAME}-key.pem"
+EOF
+```
+Create the <i>kubelet.service</i> systemd unit file:
+```
+cat <<EOF | sudo tee /etc/systemd/system/kubelet.service
+[Unit]
+Description=Kubernetes Kubelet
+Documentation=https://github.com/kubernetes/kubernetes
+After=containerd.service
+Requires=containerd.service
+
+[Service]
+ExecStart=/usr/local/bin/kubelet \\
+  --config=/var/lib/kubelet/kubelet-config.yaml \\
+  --container-runtime=remote \\
+  --container-runtime-endpoint=unix:///var/run/containerd/containerd.sock \\
+  --image-pull-progress-deadline=2m \\
+  --kubeconfig=/var/lib/kubelet/kubeconfig \\
+  --network-plugin=cni \\
+  --register-node=true \\
+  --v=2
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
+EOF
+```
+
+* Configure the Kubernetes Proxy
+```
+sudo mv kube-proxy.kubeconfig /var/lib/kube-proxy/kubeconfig
+```
+Create the <i>kube-proxy-config.yaml</i> configuration file:
+
+```
+cat <<EOF | sudo tee /var/lib/kube-proxy/kube-proxy-config.yaml
+kind: KubeProxyConfiguration
+apiVersion: kubeproxy.config.k8s.io/v1alpha1
+clientConnection:
+  kubeconfig: "/var/lib/kube-proxy/kubeconfig"
+mode: "iptables"
+clusterCIDR: "10.200.0.0/16"
+EOF
+```
+Create the kube-proxy.service systemd unit file:
+
+```
+cat <<EOF | sudo tee /etc/systemd/system/kube-proxy.service
+[Unit]
+Description=Kubernetes Kube Proxy
+Documentation=https://github.com/kubernetes/kubernetes
+
+[Service]
+ExecStart=/usr/local/bin/kube-proxy \\
+  --config=/var/lib/kube-proxy/kube-proxy-config.yaml
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
+EOF
+```
+
+* Start the Worker Services
+```
+  sudo systemctl daemon-reload
+  sudo systemctl enable containerd kubelet kube-proxy
+  sudo systemctl start containerd kubelet kube-proxy
+```
+
+* Verification
+
+List the registered Kubernetes nodes:
+
+```
+gcloud compute ssh controller-0 \
+  --command "kubectl get nodes --kubeconfig admin.kubeconfig"
+```
+
+> output
+```
+NAME       STATUS   ROLES    AGE   VERSION
+worker-0   Ready    <none>   10m   v1.12.0
+worker-1   Ready    <none>   11m   v1.12.0
+worker-2   Ready    <none>   10m   v1.12.0
+```
+
+#### Configuring kubectl for Remote Access
+
+In this lab you will generate a kubeconfig file for the <i>kubectl</i> command line utility based on the <i>admin</i> user credentials.
+
+Each kubeconfig requires a Kubernetes API Server to connect to. To support high availability the IP address assigned to the external load balancer fronting the Kubernetes API Servers will be used.
+
+Generate a kubeconfig file suitable for authenticating as the admin user:
+```
+  KUBERNETES_PUBLIC_ADDRESS=$(gcloud compute addresses describe kubernetes-the-hard-way \
+    --region $(gcloud config get-value compute/region) \
+    --format 'value(address)')
+
+  kubectl config set-cluster kubernetes-the-hard-way \
+    --certificate-authority=ca.pem \
+    --embed-certs=true \
+    --server=https://${KUBERNETES_PUBLIC_ADDRESS}:6443
+
+  kubectl config set-credentials admin \
+    --client-certificate=admin.pem \
+    --client-key=admin-key.pem
+
+  kubectl config set-context kubernetes-the-hard-way \
+    --cluster=kubernetes-the-hard-way \
+    --user=admin
+
+  kubectl config use-context kubernetes-the-hard-way
+```
+
+* Verification
+
+Check the health of the remote Kubernetes cluster:
+
+```
+kubectl get componentstatuses
+```
+> output:
+```
+NAME                 STATUS    MESSAGE             ERROR
+controller-manager   Healthy   ok
+scheduler            Healthy   ok
+etcd-1               Healthy   {"health":"true"}
+etcd-2               Healthy   {"health":"true"}
+etcd-0               Healthy   {"health":"true"}
+```
+List the nodes in the remote Kubernetes cluster:
+```
+kubectl get nodes
+```
+> output:
+```
+NAME       STATUS   ROLES    AGE   VERSION
+worker-0   Ready    <none>   14m   v1.12.0
+worker-1   Ready    <none>   14m   v1.12.0
+worker-2   Ready    <none>   14m   v1.12.0
+```
+
+#### Provisioning Pod Network Routes
+
+Pods scheduled to a node receive an IP address from the node's Pod CIDR range. At this point pods can not communicate with other pods running on different nodes due to missing network routes.
+
+In this lab you will create a route for each worker node that maps the node's Pod CIDR range to the node's internal IP address.
+
+* The Routing Table
+
+Print the internal IP address and Pod CIDR range for each worker instance:
+
+```
+for instance in worker-0 worker-1 worker-2; do
+  gcloud compute instances describe ${instance} \
+    --format 'value[separator=" "](networkInterfaces[0].networkIP,metadata.items[0].value)'
+done
+```
+> output:
+```
+10.240.0.20 10.200.0.0/24
+10.240.0.21 10.200.1.0/24
+10.240.0.22 10.200.2.0/24
+```
+
+* Routes
+
+Create network routes for each worker instance:
+
+```
+for i in 0 1 2; do
+  gcloud compute routes create kubernetes-route-10-200-${i}-0-24 \
+    --network kubernetes-the-hard-way \
+    --next-hop-address 10.240.0.2${i} \
+    --destination-range 10.200.${i}.0/24
+done
+```
+List the routes in the kubernetes-the-hard-way VPC network:
+```
+gcloud compute routes list --filter "network: kubernetes-the-hard-way"
+```
+> output
+```
+NAME                            NETWORK                  DEST_RANGE     NEXT_HOP                  PRIORITY
+default-route-4efe3fc4aab42a71  kubernetes-the-hard-way  0.0.0.0/0      default-internet-gateway  1000
+default-route-b8c3b87a29570c17  kubernetes-the-hard-way  10.240.0.0/24  kubernetes-the-hard-way   1000
+kubernetes-route-10-200-0-0-24  kubernetes-the-hard-way  10.200.0.0/24  10.240.0.20               1000
+kubernetes-route-10-200-1-0-24  kubernetes-the-hard-way  10.200.1.0/24  10.240.0.21               1000
+kubernetes-route-10-200-2-0-24  kubernetes-the-hard-way  10.200.2.0/24  10.240.0.22               1000
+```
+
+#### Deploying the DNS Cluster Add-on
 
 
+In this lab you will deploy the [DNS add-on](https://kubernetes.io/docs/concepts/services-networking/dns-pod-service/) which provides DNS based service discovery, backed by [CoreDNS](https://coredns.io/), to applications running inside the Kubernetes cluster.
 
+* The DNS Cluster Add-on
 
+Deploy the coredns cluster add-on:
 
-
-
-####
-####
-####
-####
-####
-####
-####
-####
-
-
+```
+kubectl apply -f https://storage.googleapis.com/kubernetes-the-hard-way/coredns.yaml
 
 ```
 
-
-
-
-
-
-
-
-
-
+> output
+```
+serviceaccount/coredns created
+clusterrole.rbac.authorization.k8s.io/system:coredns created
+clusterrolebinding.rbac.authorization.k8s.io/system:coredns created
+configmap/coredns created
+deployment.extensions/coredns created
+service/kube-dns created
 ```
 
-
-
-
-
-
-
-
-
-
-
+List the pods created by the <i>kube-dns</i> deployment:
 ```
-* Пройти Kubernetes The Hard Way;
-* Проверить, что kubectl apply -f проходит по созданным до этого
-deployment-ам (ui, post, mongo, comment) и поды запускаются;
-* Удалить кластер после прохождения THW;
-* Все созданные в ходе прохождения THW файлы (кроме
-бинарных) поместить в папку kubernetes/the_hard_way
-репозитория (сертификаты и ключи тоже можно коммитить, но
-только после удаления кластера).
-
+kubectl get pods -l k8s-app=kube-dns -n kube-system
+```
+> output
+```
+NAME                       READY   STATUS    RESTARTS   AGE
+coredns-699f8ddd77-cpr8j   1/1     Running   0          71s
+coredns-699f8ddd77-zcldn   1/1     Running   0          71s
 ```
 
+* Verification
+
+Create a <i>busybox</i> deployment:
+
+```
+kubectl run busybox --image=busybox:1.28 --command -- sleep 3600
+```
+List the pod created by the <i>busybox</i> deployment:
+```
+kubectl get pods -l run=busybox
+```
+
+> output:
+```
+NAME                      READY   STATUS    RESTARTS   AGE
+busybox-bd8fb7cbd-9bnbk   1/1     Running   0          76s
+```
+
+Retrieve the full name of the <i>busybox</i> pod:
+
+```
+POD_NAME=$(kubectl get pods -l run=busybox -o jsonpath="{.items[0].metadata.name}")
+```
+Execute a DNS lookup for the <i>kubernetes</i> service inside the <i>busybox</i> pod:
+
+```
+kubectl exec -ti $POD_NAME -- nslookup kubernetes
+```
+> output
+```
+Server:    10.32.0.10
+Address 1: 10.32.0.10 kube-dns.kube-system.svc.cluster.local
+
+Name:      kubernetes
+Address 1: 10.32.0.1 kubernetes.default.svc.cluster.local
+```
+
+#### Smoke Test
+
+##### In this lab you will complete a series of tasks to ensure your Kubernetes cluster is functioning correctly.
+
+* Data Encryption
+In this section you will verify the ability to [encrypt secret data at rest](https://kubernetes.io/docs/tasks/administer-cluster/encrypt-data/#verifying-that-data-is-encrypted).
+
+Create a generic secret:
+```
+kubectl create secret generic kubernetes-the-hard-way \
+  --from-literal="mykey=mydata"
+```
+Print a hexdump of the kubernetes-the-hard-way secret stored in etcd:
+```
+gcloud compute ssh controller-0 \
+  --command "sudo ETCDCTL_API=3 etcdctl get \
+  --endpoints=https://127.0.0.1:2379 \
+  --cacert=/etc/etcd/ca.pem \
+  --cert=/etc/etcd/kubernetes.pem \
+  --key=/etc/etcd/kubernetes-key.pem\
+  /registry/secrets/default/kubernetes-the-hard-way | hexdump -C"
+```
+> output
+```
+00000000  2f 72 65 67 69 73 74 72  79 2f 73 65 63 72 65 74  |/registry/secret|
+00000010  73 2f 64 65 66 61 75 6c  74 2f 6b 75 62 65 72 6e  |s/default/kubern|
+00000020  65 74 65 73 2d 74 68 65  2d 68 61 72 64 2d 77 61  |etes-the-hard-wa|
+00000030  79 0a 6b 38 73 3a 65 6e  63 3a 61 65 73 63 62 63  |y.k8s:enc:aescbc|
+00000040  3a 76 31 3a 6b 65 79 31  3a d7 29 23 06 e7 16 c4  |:v1:key1:.)#....|
+00000050  22 bc 75 c2 a3 21 f3 33  fc 4a c4 7e a5 70 83 30  |".u..!.3.J.~.p.0|
+00000060  48 13 fe 22 9a 73 0e fc  8c f3 06 01 eb 46 24 15  |H..".s.......F$.|
+00000070  59 c5 02 37 8e eb 26 d9  2f 54 1c cd 21 a4 1f 49  |Y..7..&./T..!..I|
+00000080  1a cc 9a a6 27 e2 6c 0c  ce 96 da 85 36 21 2a 83  |....'.l.....6!*.|
+00000090  cb b3 62 1c d8 c5 18 b0  15 95 48 cf 2c 2f 41 d5  |..b.......H.,/A.|
+000000a0  d9 33 10 65 93 4f e3 55  99 3a a2 64 47 83 24 00  |.3.e.O.U.:.dG.$.|
+000000b0  96 8b 07 6b 94 f5 62 05  f5 10 12 3f ae 11 97 ca  |...k..b....?....|
+000000c0  9e f1 e5 54 c3 43 28 fd  36 15 9b 41 c9 19 08 65  |...T.C(.6..A...e|
+000000d0  18 27 16 11 44 b6 24 fc  3f 39 2f 9b 36 3d d1 9e  |.'..D.$.?9/.6=..|
+000000e0  c8 da a5 e4 2d 8a 28 bf  2b 0a                    |....-.(.+.|
+```
+
+The etcd key should be prefixed with <i>k8s:enc:aescbc:v1:key1</i>, which indicates the <i>aescbc</i> provider was used to encrypt the data with the <i>key1</i> encryption key.
+
+* Deployments
+
+In this section you will verify the ability to create and manage [Deployments](https://kubernetes.io/docs/concepts/workloads/controllers/deployment/).
+
+Create a deployment for the [nginx](https://nginx.org/en/) web server:
+```
+kubectl run nginx --image=nginx
+```
+List the pod created by the <i>nginx</i> deployment:
+```
+kubectl get pods -l run=nginx
+```
+> output
+```
+NAME                    READY   STATUS    RESTARTS   AGE
+nginx-dbddb74b8-9d2ch   1/1     Running   0          22s
+```
+* Port Forwarding
+
+In this section you will verify the ability to access applications remotely using [port forwarding](https://kubernetes.io/docs/tasks/access-application-cluster/port-forward-access-application-cluster/).
+
+Retrieve the full name of the nginx pod:
+```
+POD_NAME=$(kubectl get pods -l run=nginx -o jsonpath="{.items[0].metadata.name}")
+```
+Forward port 8080 on your local machine to port 80 of the nginx pod:
+```
+kubectl port-forward $POD_NAME 8080:80
+```
+> output
+```
+Forwarding from 127.0.0.1:8080 -> 80
+Forwarding from [::1]:8080 -> 80
+```
+In a new terminal make an HTTP request using the forwarding address:
+```
+curl --head http://127.0.0.1:8080
+```
+> output
+```
+HTTP/1.1 200 OK
+Server: nginx/1.15.8
+Date: Sun, 20 Jan 2019 21:48:12 GMT
+Content-Type: text/html
+Content-Length: 612
+Last-Modified: Tue, 25 Dec 2018 09:56:47 GMT
+Connection: keep-alive
+ETag: "5c21fedf-264"
+Accept-Ranges: bytes
+```
+
+* Logs
+
+In this section you will verify the ability to [retrieve container logs](https://kubernetes.io/docs/concepts/cluster-administration/logging/).
+
+Print the <i>nginx</i> pod logs:
+```
+kubectl logs $POD_NAME
+```
+> output
+```
+127.0.0.1 - - [20/Jan/2019:21:48:12 +0000] "HEAD / HTTP/1.1" 200 0 "-" "curl/7.54.0" "-"
+```
+
+* Exec
+In this section you will verify the ability to [execute commands in a container](https://kubernetes.io/docs/tasks/debug-application-cluster/get-shell-running-container/#running-individual-commands-in-a-container).
+
+Print the nginx version by executing the <i>nginx -v</i> command in the nginx container:
+
+```
+kubectl exec -ti $POD_NAME -- nginx -v
+```
+
+> output
+```
+nginx version: nginx/1.15.8
+```
+
+* Services
+
+In this section you will verify the ability to expose applications using a [Service](https://kubernetes.io/docs/concepts/services-networking/service/).
+
+Expose the <i>nginx</i> deployment using a [NodePort](https://kubernetes.io/docs/concepts/services-networking/service/#type-nodeport) service:
+
+```
+kubectl expose deployment nginx --port 80 --type NodePort
+```
+Retrieve the node port assigned to the <i>nginx</i> service:
+
+```
+NODE_PORT=$(kubectl get svc nginx \
+  --output=jsonpath='{range .spec.ports[0]}{.nodePort}')
+```
+
+Create a firewall rule that allows remote access to the <i>nginx</i> node port:
+
+```
+gcloud compute firewall-rules create kubernetes-the-hard-way-allow-nginx-service \
+  --allow=tcp:${NODE_PORT} \
+  --network kubernetes-the-hard-way
+```
+
+Retrieve the external IP address of a worker instance:
+```
+EXTERNAL_IP=$(gcloud compute instances describe worker-0 \
+  --format 'value(networkInterfaces[0].accessConfigs[0].natIP)')
+```
+
+Make an HTTP request using the external IP address and the <i>nginx</i> node port:
+```
+curl -I http://${EXTERNAL_IP}:${NODE_PORT}
+```
+> output
+```
+HTTP/1.1 200 OK
+Server: nginx/1.15.8
+Date: Sun, 20 Jan 2019 21:56:46 GMT
+Content-Type: text/html
+Content-Length: 612
+Last-Modified: Tue, 25 Dec 2018 09:56:47 GMT
+Connection: keep-alive
+ETag: "5c21fedf-264"
+Accept-Ranges: bytes
+```
+
+* Untrusted Workloads
+
+This section will verify the ability to run untrusted workloads using [gVisor](https://github.com/google/gvisor).
+
+Create the <i>untrusted</i> pod:
+```
+cat <<EOF | kubectl apply -f -
+apiVersion: v1
+kind: Pod
+metadata:
+  name: untrusted
+  annotations:
+    io.kubernetes.cri.untrusted-workload: "true"
+spec:
+  containers:
+    - name: webserver
+      image: gcr.io/hightowerlabs/helloworld:2.0.0
+EOF
+```
+
+* Verification
+
+In this section you will verify the <i>untrusted</i> pod is running under gVisor (runsc) by inspecting the assigned worker node.
+
+Verify the <i>untrusted</i> pod is running:
+
+> output
+
+```
+NAME                      READY   STATUS    RESTARTS   AGE   IP           NODE       NOMINATED NODE
+busybox-bd8fb7cbd-9bnbk   1/1     Running   0          27m   10.200.0.2   worker-0   <none>
+nginx-dbddb74b8-9d2ch     1/1     Running   0          15m   10.200.0.3   worker-0   <none>
+untrusted                 1/1     Running   0          67s   10.200.1.3   worker-1   <none>
+```
+
+Get the node name where the <i>untrusted</i> pod is running:
+```
+INSTANCE_NAME=$(kubectl get pod untrusted --output=jsonpath='{.spec.nodeName}')
+```
+SSH into the worker node:
+```
+gcloud compute ssh ${INSTANCE_NAME}
+```
+List the containers running under gVisor:
+```
+sudo runsc --root  /run/containerd/runsc/k8s.io list
+```
+> output
+```
+I0120 22:01:35.289695   18966 x:0] ***************************
+I0120 22:01:35.289875   18966 x:0] Args: [runsc --root /run/containerd/runsc/k8s.io list]
+I0120 22:01:35.289950   18966 x:0] Git Revision: 50c283b9f56bb7200938d9e207355f05f79f0d17
+I0120 22:01:35.290018   18966 x:0] PID: 18966
+I0120 22:01:35.290088   18966 x:0] UID: 0, GID: 0
+I0120 22:01:35.290158   18966 x:0] Configuration:
+I0120 22:01:35.290212   18966 x:0]              RootDir: /run/containerd/runsc/k8s.io
+I0120 22:01:35.290475   18966 x:0]              Platform: ptrace
+I0120 22:01:35.290627   18966 x:0]              FileAccess: exclusive, overlay: false
+I0120 22:01:35.290754   18966 x:0]              Network: sandbox, logging: false
+I0120 22:01:35.290877   18966 x:0]              Strace: false, max size: 1024, syscalls: []
+I0120 22:01:35.291000   18966 x:0] ***************************
+ID                                                                 PID         STATUS      BUNDLE                                          CREATED                OWNER
+353e797b41e3e5bdd183605258b66a153a61a3f7ff0eb8b0e0e7d8b6e4b3bc5c   18521       running     /run/containerd/io.containerd.runtime.v1.linux/k8s.io/353e797b41e3e5bdd183605258b66a153a61a3f7ff0eb8b0e0e7d8b6e4b3bc5c   0001-01-01T00:00:00Z
+5b1e7bcf2a5cb033888650e49c3978cf429b99d97c4be5c7f5ad14e45b3015a9   18441       running     /run/containerd/io.containerd.runtime.v1.linux/k8s.io/5b1e7bcf2a5cb033888650e49c3978cf429b99d97c4be5c7f5ad14e45b3015a9   0001-01-01T00:00:00Z
+I0120 22:01:35.294484   18966 x:0] Exiting with status: 0
+```
+
+Get the ID of the untrusted pod:
+```
+POD_ID=$(sudo crictl -r unix:///var/run/containerd/containerd.sock \
+  pods --name untrusted -q)
+```
+Get the ID of the webserver container running in the untrusted pod:
+```
+CONTAINER_ID=$(sudo crictl -r unix:///var/run/containerd/containerd.sock \
+  ps -p ${POD_ID} -q)
+```
+
+Use the <i>gVisor</i> runsc command to display the processes running inside the <i>webserver</i> container:
+```
+sudo runsc --root /run/containerd/runsc/k8s.io ps ${CONTAINER_ID}
+```
+> output
+```
+I0120 22:04:59.988268   19220 x:0] ***************************
+I0120 22:04:59.988443   19220 x:0] Args: [runsc --root /run/containerd/runsc/k8s.io ps 353e797b41e3e5bdd183605258b66a153a61a3f7ff0eb8b0e0e7d8b6e4b3bc5c]
+I0120 22:04:59.988521   19220 x:0] Git Revision: 50c283b9f56bb7200938d9e207355f05f79f0d17
+I0120 22:04:59.988604   19220 x:0] PID: 19220
+I0120 22:04:59.988673   19220 x:0] UID: 0, GID: 0
+I0120 22:04:59.988736   19220 x:0] Configuration:
+I0120 22:04:59.988789   19220 x:0]              RootDir: /run/containerd/runsc/k8s.io
+I0120 22:04:59.988910   19220 x:0]              Platform: ptrace
+I0120 22:04:59.989037   19220 x:0]              FileAccess: exclusive, overlay: false
+I0120 22:04:59.989160   19220 x:0]              Network: sandbox, logging: false
+I0120 22:04:59.989299   19220 x:0]              Strace: false, max size: 1024, syscalls: []
+I0120 22:04:59.989431   19220 x:0] ***************************
+UID       PID       PPID      C         STIME     TIME      CMD
+0         1         0         0         21:58     10ms      app
+I0120 22:04:59.990890   19220 x:0] Exiting with status: 0
+```
+
+#### Cleaning Up
+
+In this lab you will delete the compute resources created during this tutorial.
+
+* Compute Instances
+
+Delete the controller and worker compute instances:
+
+```
+gcloud -q compute instances delete \
+  controller-0 controller-1 controller-2 \
+  worker-0 worker-1 worker-2
+```
+
+* Networking
+
+Delete the external load balancer network resources:
+
+```
+  gcloud -q compute forwarding-rules delete kubernetes-forwarding-rule \
+    --region $(gcloud config get-value compute/region)
+
+  gcloud -q compute target-pools delete kubernetes-target-pool
+
+  gcloud -q compute http-health-checks delete kubernetes
+
+  gcloud -q compute addresses delete kubernetes-the-hard-way
+```
+
+Delete the `kubernetes-the-hard-way` firewall rules:
+
+```
+gcloud -q compute firewall-rules delete \
+  kubernetes-the-hard-way-allow-nginx-service \
+  kubernetes-the-hard-way-allow-internal \
+  kubernetes-the-hard-way-allow-external \
+  kubernetes-the-hard-way-allow-health-check
+```
+
+Delete the `kubernetes-the-hard-way` network VPC:
+
+```
+  gcloud -q compute routes delete \
+    kubernetes-route-10-200-0-0-24 \
+    kubernetes-route-10-200-1-0-24 \
+    kubernetes-route-10-200-2-0-24
+
+  gcloud -q compute networks subnets delete kubernetes
+
+  gcloud -q compute networks delete kubernetes-the-hard-way
+```
 
 
 ### Homework 20 (logging-1)
@@ -1352,7 +2963,7 @@ url: http://dev.example.com
 
 * Два новых этапа: <i>stage</i> и <i>production</i>. <i>Stage</i> будет содержать <i>job</i>, имитирующий выкатку на <i>staging</i> окружение, <i>production</i> - на <i>production</i> окружение. <i>Job</i> будут запускаться с кнопки
 
-* Директива <i>only</i> описывает список условий, которые должны быть истинны, чтобы <i>job</i> мог запуститься. Регулярное выражение  `/^\d+\.\d+\.\d+/` означает, что должен стоять <i>semver</i> тэг в <i>git<i>, например, <i>2.4.10</i>
+* Директива <i>only</i> описывает список условий, которые должны быть истинны, чтобы <i>job</i> мог запуститься. Регулярное выражение  `/^\d+\.\d+\.\d+/` означает, что должен стоять <i>semver</i> тэг в <i>git</i>, например, <i>2.4.10</i>
 
 * Пометка текущего коммита тэгом:
 ```
