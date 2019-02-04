@@ -2,6 +2,430 @@
 ozyab09 microservices repository
 
 
+### Homework 25 (kubernetes-5)
+[![Build Status](https://travis-ci.com/Otus-DevOps-2018-09/ozyab09_microservices.svg?branch=kubernetes-5)](https://travis-ci.com/Otus-DevOps-2018-09/ozyab09_microservices)
+
+#### Подготовка
+
+У нас должен быть развернуть кластер k8s:
+- минимум 2 ноды g1-small (1,5 ГБ)
+- минимум 1 нода n1-standard-2 (7,5 ГБ)
+
+В настройках:
+- Stackdriver Logging - Отключен
+- Stackdriver Monitoring - Отключен
+- Устаревшие права доступа - Включено
+
+Т.к. сервер был создан заново, повторно установим Tiller: `$ kubectl apply -f kubectl apply -f kubernetes/reddit/tiller.yml`
+
+Запуск tiller-сервера: `$ helm init --service-account tiller`
+
+Проверка: `$ kubectl get pods -n kube-system --selector app=helm`
+
+Из Helm-чарта установим ingress-контроллер nginx: `$ helm install stable/nginx-ingress --name nginx`
+
+Найдем выданный IP-адрес:
+```
+$ kubectl get svc
+NAME                                  TYPE           CLUSTER-IP     EXTERNAL-IP     PORT(S)                      AGE
+kubernetes                            ClusterIP      10.47.240.1    <none>          443/TCP                      6m
+nginx-nginx-ingress-controller        LoadBalancer   10.47.255.40   35.197.107.27   80:30949/TCP,443:31982/TCP   1m
+nginx-nginx-ingress-default-backend   ClusterIP      10.47.251.3    <none>          80/TCP                       1m
+```
+Добавим в /etc/hosts: `# echo 35.197.107.27 reddit reddit-prometheus reddit-grafana reddit-non-prod production reddit-kibana staging prod > /etc/hosts`
+
+#### План
+
+* Развертывание Prometheus в k8s
+* Настройка Prometheus и Grafana для сбора метрик
+* Настройка EFK для сбора логов
+
+#### Мониторинг
+
+Будем использовать инструменты:
+* prometheus - сервер сбора и алергинга
+* grafana - сервер визуализации метрик
+* alertmanager - компонент prometheus для алертинга
+* различные экспортеры для метрик prometheus
+
+Prometheus отлично подходит для работы с контейнерами и динамичным размещением сервисов.
+
+Схема работы:
+![Monitoring Pipeline](images/hw25_1.png)
+
+#### Установка Prometheus
+
+Prometheus будем ставить с помощью Helm чарта. Загрузим prometheus локально в Charts каталог:
+```
+$ cd kubernetes/charts
+$ helm fetch —-untar stable/prometheus 
+```
+
+Создадим внутри директории чарта файл </i>custom_values.yml</i>.
+
+Основные отличия от <i>values.yml</i>:
+- отключена часть устанавливаемых сервисов (pushgateway, alertmanager, kube-state-metrics)
+- включено создание Ingress’а для подключения через nginx
+- поправлен endpoint для сбора метрик cadvisor
+- уменьшен интервал сбора метрик (с 1 минуты до 30 секунд)
+
+Запустим Prometheus в k8s: 
+```
+$ cd kubernetes/charsts/prometheus
+$ helm upgrade prom . -f custom_values.yml --install`
+```
+
+Перейдем по адресу http://reddit-prometheus/ в раздел <i>Targets</i>.
+![reddit-prometheus](images/hw25_3.png)
+
+#### Targets
+
+У нас уже присутствует ряд endpoint’ов для сбора метрик
+- метрики API-сервера
+- метрики нод с cadvisor’ов
+- сам prometheus
+
+![Targets](images/hw25_3.png)
+
+Отметим, что можно собирать метрики cadvisor’а (который уже является частью kubelet) через проксирующий запрос в kube-api-server.
+
+Если зайти по ssh на любую из машин кластера и запросить `$ curl http://localhost:4194/metrics` то получим те же метрики у kubelet напрямую
+
+Но вариант с kube-api предпочтительней, т.к. этот трафик шифруется TLS и требует аутентификации.
+
+Таргеты для сбора метрик найдены с помощью service discovery (SD), настроенного в конфиге prometheus (лежит в <i>custom-values.yml</i>):
+```yml
+ prometheus.yml:
+...
+ - job_name: 'kubernetes-apiservers' # kubernetes-apiservers (1/1 up)
+...
+ - job_name: 'kubernetes-nodes' # kubernetes-apiservers (3/3 up)
+ kubernetes_sd_configs:         # Настройки Service Discovery (для поиска target'ов)
+ - role: node
+ scheme: https                  # Настройки подключения к target’ам (для сбора метрик)
+ tls_config:
+ ca_file: /var/run/secrets/kubernetes.io/serviceaccount/ca.crt
+ insecure_skip_verify: true
+ bearer_token_file: /var/run/secrets/kubernetes.io/serviceaccount/token
+ relabel_configs:             # Настройки различных меток, фильтрация найденных таргетов, их изменение
+```
+
+Использование SD в kubernetes позволяет нам динамично менять кластер (как сами хосты, так и сервисы и приложения) Цели для мониторинга находим c помощью запросов к k8s API:
+```yml
+custom-values.yml
+
+...
+ prometheus.yml:
+...
+scrape_configs:
+ - job_name: 'kubernetes-nodes'
+ kubernetes_sd_configs:
+ - role: node
+```
+
+Role объект, который нужно найти:
+- node
+- endpoints
+- pod
+- service
+- ingress
+
+Prometheus ищет ноды
+![Prometheus service discovery](images/hw25_4.png)
+
+Т.к. сбор метрик prometheus осуществляется поверх стандартного HTTP-протокола, то могут понадобится дополнительные настройки для безопасного доступа к метрикам.
+
+Ниже приведены настройки для сбора метрик из k8s API
+```yml
+custom-values.yml
+
+...
+scheme: https # Схема подключения - http (default) или https
+tls_config: # Конфиг TLS - коревой сертификат сервера для проверки достоверности сервера
+ ca_file: /var/run/secrets/kubernetes.io/serviceaccount/ca.crt
+ insecure_skip_verify: true
+bearer_token_file: /var/run/secrets/kubernetes.io/serviceaccount/token # Токен для аутентификации на сервере
+```
+
+```yml
+custom-values.yml
+
+...
+#Kubernetes nodes
+relabel_configs:    #  преобразовать все k8s лейблы таргета в лейблы prometheus
+- action: labelmap
+  regex: __meta_kubernetes_node_label_(.+)
+- target_label: __address__   #  Поменять лейбл для адреса сбора метрик
+  replacement: kubernetes.default.svc:443
+- source_labels: [__meta_kubernetes_node_name]
+  regex: (.+)
+  target_label: __metrics_path__    #  Поменять лейбл для пути сбора метрик
+  replacement: /api/v1/nodes/${1}/proxy/metrics/cadvisor 
+```
+
+#### Метрики
+
+Все найденные на эндпоинтах метрики сразу же отобразятся в списке (вкладка Graph). Метрики Cadvisor начинаются с container_.
+
+![Cardvisor Metics](images/hw25_5.png)
+
+Cadvisor собирает лишь информацию о потреблении ресурсов и производительности отдельных docker-контейнеров. При этом он ничего не знает о сущностях k8s (деплойменты, репликасеты, ...).
+
+Для сбора этой информации будем использовать [сервис](https://github.com/kubernetes/kube-state-metrics) <i>kube-state-metrics</i>. Он входит в чарт Prometheus. Включим его.
+```yml
+prometheus/custom_values.yml 
+
+...
+kubeStateMetrics:
+ ## If false, kube-state-metrics will not be installed
+ ##
+ enabled: true 
+```
+
+Обновим релиз: `$ helm upgrade prom . -f custom_values.yml --install`
+
+В Targets 
+![Targets After Update](images/hw25_6.png)
+
+В Graph
+![Graph After Update](images/hw25_7.png)
+
+По аналогии с <i>kube_state_metrics</i> включим (<i>enabled: true</i>) поды <i>node-exporter</i> в <i>custom_values.yml</i>:
+
+```yml
+prometheus/custom_values.yml 
+
+...
+nodeExporter:
+  enabled: true
+```
+
+Обновим релиз: `$ helm upgrade prom . -f custom_values.yml --install`
+
+Проверим, что метрики начали собираться с них. 
+![Node-exporter metrics](images/hw25_7a.png)
+
+
+Запустим приложение из helm чарта reddit:
+```
+$ cd kubernetes/charts
+$ helm upgrade reddit-test ./reddit --install
+$ helm upgrade production --namespace production ./reddit --install
+$ helm upgrade staging --namespace staging ./reddit —-install
+```
+
+Раньше мы "хардкодили" адреса/dns-имена наших приложений для сбора метрик с них. 
+
+```yml
+prometheus.yml
+
+ - job_name: 'ui'
+   static_configs:
+     - targets:
+       - 'ui:9292'
+
+- job_name: 'comment'
+  static_configs:
+    - targets:
+      - 'comment:9292'
+ ```
+Теперь мы можем использовать механизм ServiceDiscovery для обнаружения приложений, запущенных в k8s.
+
+Приложения будем искать так же, как и служебные сервисы k8s. Модернизируем конфиг prometheus:
+```yml
+custom_values.yml
+
+  - job_name: 'reddit-endpoints'
+    kubernetes_sd_configs:
+      - role: endpoints
+    relabel_configs:
+      - source_labels: [__meta_kubernetes_service_label_app]
+        action: keep  #Используем действие keep, чтобы оставить только эндпоинты сервисов с метками “app=reddit”
+        regex: reddit
+```
+
+Обновите релиз prometheus: `$ helm upgrade prom . -f custom_values.yml --install`
+![SD applying for reddit-endpoints discovery](images/hw25_7b.png)
+
+
+Мы получили эндпоинты, но что это за поды мы не знаем. Добавим метки k8s. Все лейблы и аннотации k8s изначально отображаются в
+prometheus в формате:
+```
+__meta_kubernetes_service_label_labelname
+__meta_kubernetes_service_annotation_annotationname 
+```
+
+```yml
+custom_values.yml
+
+  relabel_configs:
+    - action: labelmap  #Отобразить все совпадения групп из regex в label’ы Prometheus
+      regex: __meta_kubernetes_service_label_(.+) 
+```
+Обновим релиз prometheus: `$ helm upgrade prom . -f custom_values.yml --install`
+
+Теперь мы видим лейблы k8s, присвоенные POD’ам:
+![K8s PODs labels](images/hw25_8.png)
+
+Добавим еще label’ы для prometheus и обновим helm-релиз. Т.к. метки вида __meta_* не публикуются, то нужно создать свои, перенеся в них информацию:
+```yml
+custom_values.yml
+
+...
+- source_labels: [__meta_kubernetes_namespace]
+  target_label: kubernetes_namespace
+- source_labels: [__meta_kubernetes_service_name]
+  target_label: kubernetes_name
+...
+```
+
+Обновим релиз prometheus:
+![Added labels for prometheus](images/hw25_9.png)
+
+Сейчас мы собираем метрики со всех сервисов reddit’а в 1 группе target-ов. Мы можем отделить target-ы компонент друг от друга (по
+окружениям, по самим компонентам), а также выключать и включать опцию мониторинга для них с помощью все тех же labelов. Например, добавим в конфиг еще 1 job:
+```yml
+custom_values.yml
+
+...
+- job_name: 'reddit-production'
+   kubernetes_sd_configs:
+     - role: endpoints
+   relabel_configs:
+     - action: labelmap
+       regex: __meta_kubernetes_service_label_(.+)
+     - source_labels: [__meta_kubernetes_service_label_app, __meta_kubernetes_namespace]  # Для разных лейблов
+       action: keep
+       regex: reddit;(production|staging)+                                                # разные регекспы
+     - source_labels: [__meta_kubernetes_namespace]
+       target_label: kubernetes_namespace
+     - source_labels: [__meta_kubernetes_service_name]
+       target_label: kubernetes_name
+...
+```
+Обновим релиз prometheus и посмотрим:
+![no information](images/hw25_10.png)
+
+Метрики будут отображаться для всех инстансов приложений:
+![no information](images/hw25_11.png)
+
+Разобьем конфигурацию job’а `reddit-endpoints` так, чтобы было 3 job’а для каждой из компонент приложений (post-endpoints, commenten-dpoints, ui-endpoints), а reddit-endpoints уберем:
+
+```yml
+custom_values.yml
+
+...
+      - job_name: 'post-endpoints'
+        kubernetes_sd_configs:
+          - role: endpoints
+        relabel_configs:
+          - source_labels: [__meta_kubernetes_service_label_component,__meta_kubernetes_namespace]
+            action: keep
+            regex: post;(production|staging)+
+          - action: labelmap
+            regex: __meta_kubernetes_service_label_(.+)
+          - source_labels: [__meta_kubernetes_namespace]
+            target_label: kubernetes_namespace
+          - source_labels: [__meta_kubernetes_service_name]
+            target_label: kubernetes_name
+
+      - job_name: 'ui-endpoints'
+        kubernetes_sd_configs:
+          - role: endpoints
+        relabel_configs:
+          - source_labels: [__meta_kubernetes_service_label_component,__meta_kubernetes_namespace]
+            action: keep
+            regex: ui;(production|staging)+
+          - action: labelmap
+            regex: __meta_kubernetes_service_label_(.+)
+          - source_labels: [__meta_kubernetes_namespace]
+            target_label: kubernetes_namespace
+          - source_labels: [__meta_kubernetes_service_name]
+            target_label: kubernetes_name
+
+      - job_name: 'comment-endpoints'
+        kubernetes_sd_configs:
+          - role: endpoints
+        relabel_configs:
+          - source_labels: [__meta_kubernetes_service_label_component,__meta_kubernetes_namespace]
+            action: keep
+            regex: comment;(production|staging)+
+          - action: labelmap
+            regex: __meta_kubernetes_service_label_(.+)
+          - source_labels: [__meta_kubernetes_namespace]
+            target_label: kubernetes_namespace
+          - source_labels: [__meta_kubernetes_service_name]
+            target_label: kubernetes_name
+...
+```
+![Splitted configuration](images/hw25_11.png)
+
+#### Визуализация
+
+Поставим также grafana с помощью helm:
+```
+helm upgrade --install grafana stable/grafana --set "adminPassword=admin" \
+  --set "service.type=NodePort" \
+  --set "ingress.enabled=true" \
+  --set "ingress.hosts={reddit-grafana}"
+```
+
+
+Перейдем на http://reddit-grafana/
+
+![Grapafana welcome screen](images/hw25_12.png)
+
+Добавим prometheus data-source
+![Adding prometheus datasource](images/hw25_13.png)
+
+Адрес найдем из имени сервиса prometheus сервера
+```
+$ kubectl get svc
+NAME                                  TYPE          CLUSTER-IP    EXTERNAL-IP   PORT(S)                     AGE
+grafana-grafana                       NodePort      10.11.252.216 <none>        80:31886/TCP                22m
+kubernetes                            ClusterIP     10.11.240.1   <none>        443/TCP                     22d
+nginx-nginx-ingress-controller        LoadBalancer  10.11.243.76  104.154.94.52 80:32293/TCP,443:30193/TCP  7h
+nginx-nginx-ingress-default-backend   ClusterIP     10.11.248.132 <none>        80/TCP                      7h
+prom-prometheus-server                LoadBalancer  10.11.247.75  35.224.121.85 80:30282/TCP                4d
+```
+Добавим самый распространенный [dashboard](https://grafana.com/dashboards/315) для отслеживания состояния ресурсов k8s. Выберем datasource:
+![Selecting a Prometheus data source](images/hw25_14.png)
+
+![Grafana Dashboard: Kubernetes cluster monitoring](images/hw25_14a.png)
+
+
+Добавим собственные дашборды, созданные ранее (в ДЗ по мониторингу). Они должны также успешно отобразить данные:
+
+![Grafana Dashboard: Docker and system monitoring](images/hw25_15.png)
+
+#### Templating
+
+В текущий момент на графиках, относящихся к приложению, одновременно отображены значения метрик со всех источников сразу. При большом количестве сред и при их динамичном изменении имеет смысл сделать динамичной и удобно настройку наших дашбордов в Grafana.
+
+Сделать это можно в нашем случае с помощью механизма templating’а
+![Dashboard Templating](images/hw25_16.png)
+
+
+У нас появился список со значениями переменной namespace. Пока что он бесполезен. Чтобы их использование имело эффект нужно шаблонизировать запросы к Prometheus.
+
+![Dashboard Templating](images/hw25_18.png)
+
+Теперь мы можем настраивать общие шаблоны графиков и с помощью переменных менять в них нужные нам поля (в нашем случае это namespace).
+![Dashboard Templating: All Namespaces](images/hw25_19.png)
+![Dashboard Templating: Only Production Namespace](images/hw25_19a.png)
+
+Параметризуем все Dashboard’ы, отражающие параметры работы приложения (созданные в предыдущих ДЗ) reddit для работы с несколькими окружениями
+(неймспейсами).
+
+#### Смешанные графики
+
+Импортируем дашбоард: https://grafana.com/dashboards/741. 
+
+На этом графике одновременно используются метрики и шаблоны из cAdvisor, и из kube-state-metrics для отображения сводной информации по деплойментам.
+
+![Kubernetes Deployment metrics dashboards](images/hw25_20.png)
+
+
 
 ### Homework 24 (kubernetes-4)
 [![Build Status](https://travis-ci.com/Otus-DevOps-2018-09/ozyab09_microservices.svg?branch=kubernetes-4)](https://travis-ci.com/Otus-DevOps-2018-09/ozyab09_microservices)
