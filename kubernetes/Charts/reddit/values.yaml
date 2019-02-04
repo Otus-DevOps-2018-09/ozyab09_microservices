@@ -1,0 +1,20 @@
+comment:
+  image:
+    repository: ozyab/comment
+    tag: latest
+  service:
+    externalPort: 9292
+
+post:
+  image:
+    repository: ozyab/post
+    tag: latest
+    service:
+      externalPort: 5000
+
+ui:
+  image:
+    repository: ozyab/ui
+    tag: latest
+    service:
+      externalPort: 9292

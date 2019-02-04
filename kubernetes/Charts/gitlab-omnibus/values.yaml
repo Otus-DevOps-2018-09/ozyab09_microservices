@@ -1,0 +1,30 @@
+baseDomain: example.com
+legoEmail: 692677@mail.ru
+
+nameOverride: gitlab
+gitlab: ce
+gitlabCEImage: gitlab/gitlab-ce:10.6.2-ce.0
+gitlabEEImage: gitlab/gitlab-ee:10.6.2-ee.0
+postgresPassword: NDl1ZjNtenMxcWR6NXZnbw==
+initialSharedRunnersRegistrationToken: "tQtCbx5UZy_ByS7FyzUH"
+mattermostAppSecret: NDl1ZjNtenMxcWR6NXZnbw==
+mattermostAppUID: aadas
+redisImage: redis:3.2.10
+redisDedicatedStorage: true
+redisAccessMode: ReadWriteOnce
+postgresImage: postgres:9.6.5
+postgresDedicatedStorage: true
+postgresAccessMode: ReadWriteOnce
+gitlabDataAccessMode: ReadWriteOnce
+gitlabRegistryAccessMode: ReadWriteOnce
+gitlabConfigAccessMode: ReadWriteOnce
+gitlabRunnerImage: gitlab/gitlab-runner:alpine-v10.6.0
+provider: gke
+healthCheckToken: 'SXBAQichEJasbtDSygrD'
+
+gitlab-runner:
+  checkInterval: 1
+  runnerRegistrationToken: "tQtCbx5UZy_ByS7FyzUH"
+  runners:
+    privileged: true
+    

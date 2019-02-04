@@ -1,0 +1,8 @@
+---
+name: comment
+version: 1.0.0
+description: OTUS reddit application COMMENT
+maintainers:
+  - name: Vyacheslav Egorov
+    email: 692677@mail.com
+appVersion: 1.0
